@@ -1,9 +1,13 @@
+import type { AIProvider } from '@postdash/ai';
+import type { Pool } from '@postdash/db';
 import type { Logger } from 'pino';
 
 export interface WorkerLoopOptions {
   concurrency: number;
   pollIntervalMs: number;
   logger: Logger;
+  pool?: Pool;
+  ai?: AIProvider;
 }
 
 /**

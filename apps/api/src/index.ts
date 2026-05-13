@@ -1,8 +1,16 @@
+import { createAIProvider, parseAIEnv } from '@postdash/ai';
+import { createPool, parseDbEnv } from '@postdash/db';
 import { buildApp } from './app.js';
 import { parseApiEnv } from './env.js';
 
 const env = parseApiEnv();
-const app = await buildApp(env);
+const dbEnv = parseDbEnv();
+const aiEnv = parseAIEnv();
+
+const pool = createPool(dbEnv.DATABASE_URL);
+const ai = createAIProvider(aiEnv);
+
+const app = await buildApp(env, { pool, ai });
 
 const onSignal = async (signal: string): Promise<void> => {
   app.log.warn({ signal }, 'shutting down');
