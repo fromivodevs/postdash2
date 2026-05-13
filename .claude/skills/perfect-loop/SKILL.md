@@ -23,12 +23,15 @@ trigger_patterns:
 
 Behavior always:
 
-- `max_main_loops = 5`
-- `max_sub_loops = 5`
-- scoring = MIN
+- `max_main_loops = 10` (hard ceiling — loop НЕ останавливается раньше достижения score == 10; см. STOP RULES)
+- `max_sub_loops = 5` (per main loop)
+- scoring = MIN (одно слабое звено блокирует PERFECT)
 - roster = **lean core**
+- **target_score = 10** — единственный естественный stop condition
 
-Не спрашивай Quick/Default/Thorough. Perfect-loop всегда остаётся 5×5, но вызывает только самых важных агентов.
+Не спрашивай Quick/Default/Thorough. Perfect-loop НЕ останавливается на VERY_GOOD/GOOD — только PERFECT (score == 10) или hard ceiling.
+
+**Token warning**: 10 × 5 = до 50 sub-loops. Каждый sub-loop = 3-6 параллельных agent-вызовов + synth + (по необходимости) implementer. Это значимый расход. Пользователь может прервать Ctrl+C в любой момент — `<run_dir>/main-<N>/SUMMARY.md` сохраняет промежуточный best артефакт.
 
 Customize разрешён только если пользователь явно просит изменить глубину, добавить специалистов или "thorough/all specialists".
 
@@ -69,19 +72,48 @@ Customize разрешён только если пользователь явн
 
 ## Условия остановки (точно)
 
-1. score == 10 на любом sub-loop в main_loop 1 → пропустить остаток main 1, идти в main 2
-2. score == 10 на sub_loop == 1 в main_loop ≥ 2 → ⭐ **PERFECT_FRESH** → STOP
-3. score == 10 на sub_loop > 1 в main_loop ≥ 2 → PERFECT_REFINED → следующий main loop
-4. delta < 0.5 два sub-loop'а подряд → конвергенция → следующий main loop
-5. лимит sub_loops → следующий main loop
-6. лимит main_loops → STOP, лучший артефакт
+**Natural STOP (только при достижении PERFECT):**
+
+1. score == 10 на любом sub-loop в main_loop 1 → пропустить остаток main 1, идти в main 2 (для fresh-confirm на свежих агентах).
+2. score == 10 на sub_loop == 1 в main_loop ≥ 2 → ⭐ **PERFECT_FRESH** → STOP (единственный естественный stop loop'а).
+3. score == 10 на sub_loop > 1 в main_loop ≥ 2 → PERFECT_REFINED → следующий main loop для fresh-confirm.
+
+**Continuation (loop НЕ останавливается):**
+
+4. delta < 0.5 два sub-loop'а подряд → **эскалация**, не stop:
+   - pl-implementer обязан применить нетривиальный fix (`applied != []`);
+   - если pl-implementer уже всё применил, что мог — pl-synthesizer должен запросить НОВОГО specialist'а из Tier 2 списка (свежий взгляд на застрявшую часть);
+   - переходим в следующий main loop со свежими агентами.
+5. лимит sub_loops в текущем main loop → следующий main loop.
+
+**Hard ceiling (safety net против infinite loop):**
+
+6. Достигнут `max_main_loops` (default 10) И score всё ещё < 10 → STOP с финальным статусом ⚠ **UNREACHABLE_10**.
+
+   pl-synthesizer обязан в финальном отчёте назвать причину (одну из):
+   - (a) **scope артефакта объективно ограничивает 10** — например, scaffold-фаза без бизнес-логики, где архитектор всегда найдёт «но layering enforcement отсутствует»;
+   - (b) **reviewer-калибровка слишком строгая** — некоторые reviewer'ы дают <10 на всё (надо смягчить anchors или сменить reviewer);
+   - (c) **не хватает домен-специалиста**, замена которым lean core невозможна;
+   - (d) **противоречивые требования** в исходном запросе — невозможно одновременно удовлетворить всем.
+
+   Решение (продолжить с поднятым ceiling, принять текущий best или отклонить артефакт) принимает пользователь.
+
+7. **Token / latency soft-abort**: если оркестратор имеет `token_budget` в конфиге И накопленный расход > 80% от него → пауза с прогресс-отчётом, ждём команду user'а continue / stop / raise-budget.
 
 ## Финальные статусы
 
-- 🏆 **PERFECT** — perfect_fresh достигнут
-- ✨ **VERY_GOOD** — score 10 был, но без fresh-confirm
-- ✅ **GOOD** — best_score в [9, 10)
-- ⚠️ **BAD** — best_score < 9
+Только два финальных статуса (loop не останавливается между ними):
+
+- 🏆 **PERFECT** — perfect_fresh достигнут (score == 10 на sub_loop_1 в main_loop ≥ 2).
+- ⚠ **UNREACHABLE_10** — hard ceiling достигнут, score всё ещё < 10. Synthesizer обязан назвать причину (см. STOP RULES §6).
+
+Промежуточные tracking-метки (НЕ stop conditions, только в `SUMMARY.md`):
+
+- ✨ **VERY_GOOD** — score 10 был хоть раз, но без fresh-confirm.
+- ✅ **GOOD** — best_score в [9, 10).
+- ⚠️ **BAD** — best_score < 9.
+
+Эти метки могут появляться в `main-N/SUMMARY.md` как трекинг прогресса. Loop их игнорирует и продолжает.
 
 ## Анти-инфляционные правила
 

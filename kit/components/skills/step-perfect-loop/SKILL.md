@@ -70,13 +70,20 @@ Score 0-10 за соответствие плану.
 
 Step-perfect-loop не использует Quick/Default/Thorough presets.
 
-- max_main_loops = 3 (step-default; полный 5×5 только если пользователь явно просит)
-- max_sub_loops = 3
+- max_main_loops = 3 (step-default; full 5×5 если пользователь явно просит "with full 5x5 depth")
+- max_sub_loops = 3 (step-default) или 5 (full 5×5)
 - aggregation = MIN
 - roster = lean perfect-loop core
 - domain specialists = только по явному сигналу в diff/плане
 - pl-plan-keeper = всегда включён
 - pl-goal-keeper = включён, но с пониженным весом (этап ≠ полный запрос)
+- **target_score = 10** — единственный естественный stop (наследуется от perfect-loop)
+- **hard ceiling**:
+  - step-default (3×3) = 9 sub-loops максимум; при недостижении 10 → ⚠ **UNREACHABLE_10**;
+  - full 5×5 = 25 sub-loops максимум; та же логика;
+  - при `UNREACHABLE_10` step-perfect-loop предлагает пользователю откатить `- [x]` обратно в `- [ ]` либо принять с явным explanation.
+
+См. STOP RULES в `.claude/skills/perfect-loop/SKILL.md` — step-perfect-loop наследует их полностью с поправкой на меньший ceiling в step-default.
 
 ## Триггеры
 

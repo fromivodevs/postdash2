@@ -6,13 +6,19 @@ This is the current canonical contract for `perfect-loop`.
 
 There is one default mode:
 
-- `max_main_loops = 5`
-- `max_sub_loops = 5`
-- scoring = `MIN`
+- `max_main_loops = 10` (hard ceiling — loop does NOT stop earlier than reaching score == 10; see Stop Rules)
+- `max_sub_loops = 5` (per main loop)
+- scoring = `MIN` (one weak reviewer blocks PERFECT)
 - roster = lean core
+- **`target_score = 10`** — the only natural stop condition
 
-Do not ask for Quick, Default, or Thorough. The loop is always 5 x 5 by default,
-but it does not call every installed specialist.
+Do not ask for Quick, Default, or Thorough. The loop does NOT stop on
+VERY_GOOD or GOOD — only on PERFECT (score == 10) or hard ceiling.
+
+**Token warning**: 10 × 5 = up to 50 sub-loops. Each sub-loop = 3-6 parallel
+agent invocations + synth + (when needed) implementer. This is significant
+spend. User can Ctrl+C at any time — `<run_dir>/main-<N>/SUMMARY.md`
+preserves the best artifact so far.
 
 Customization is allowed only when the user explicitly asks to change depth,
 add specialists, or run all specialists.
@@ -90,15 +96,41 @@ one serious weakness should block a perfect result.
 
 ## Stop Rules
 
+**Natural STOP (only on PERFECT):**
+
 1. Score 10 in main loop 1: skip the rest of main loop 1 and confirm with main
    loop 2.
-2. Score 10 on sub-loop 1 in main loop 2 or later: `PERFECT_FRESH`, stop.
+2. Score 10 on sub-loop 1 in main loop 2 or later: `PERFECT_FRESH`, **STOP**
+   (the only natural stop).
 3. Score 10 on sub-loop 2+ in main loop 2 or later: `PERFECT_REFINED`, continue
-   to the next main loop for fresh confirmation unless the user asked to stop.
-4. Delta below 0.5 for two consecutive sub-loops: stop the current main loop and
-   continue with the next main loop.
+   to the next main loop for fresh confirmation.
+
+**Continuation (loop does NOT stop):**
+
+4. Delta below 0.5 for two consecutive sub-loops: **escalate**, do not stop.
+   - pl-implementer must apply a non-trivial fix (`applied != []`);
+   - if implementer has nothing left to apply, pl-synthesizer must request a
+     NEW Tier 2 specialist for fresh perspective on the stuck dimension;
+   - move to next main loop with fresh agents.
 5. Sub-loop limit reached: continue with the next main loop.
-6. Main-loop limit reached: stop and report the best artifact.
+
+**Hard ceiling (safety net against infinite loop):**
+
+6. `max_main_loops` reached AND score still < 10: STOP with status
+   ⚠ **UNREACHABLE_10**. pl-synthesizer must state the cause:
+   (a) artifact scope objectively caps the score (e.g., scaffold phase
+       without business logic);
+   (b) reviewer calibration too strict (anchors need softening or
+       reviewer swap);
+   (c) missing domain specialist that lean core cannot replace;
+   (d) contradictory requirements in the original request.
+
+   The user decides whether to continue (raise ceiling), accept current
+   best, or reject the artifact.
+
+7. Token / latency soft-abort: if orchestrator has `token_budget` set and
+   accumulated usage > 80% of it, pause with progress report and wait for
+   user's `continue` / `stop` / `raise-budget` command.
 
 ## Anti-Inflation
 

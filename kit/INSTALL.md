@@ -54,11 +54,14 @@ already exist.
 
 `perfect-loop` has one default mode:
 
-- 5 main loops x 5 sub-loops.
+- **`target_score = 10`** — the only natural stop. Loop continues until score 10 is fresh-confirmed.
+- `max_main_loops = 10` (hard ceiling against infinite loop). At ceiling without 10 → ⚠ UNREACHABLE_10 status with required cause from synthesizer.
+- `max_sub_loops = 5` per main loop.
 - MIN scoring.
 - Lean core roster only.
 - No Quick, Default, or Thorough prompt.
 - Specialists run only on explicit domain signal.
+- Delta < 0.5 across two sub-loops does NOT stop the loop — it escalates (new specialist or non-trivial implementer fix).
 
 Lean core:
 
@@ -85,11 +88,14 @@ Optional specialists:
 
 ## Step Perfect Loop
 
-`step-perfect-loop` is a plan-step validator. It inherits perfect-loop scoring
-and lean specialist gating, but uses a smaller step-default budget unless the
-user asks for the full perfect-loop depth:
+`step-perfect-loop` is a plan-step validator. It inherits perfect-loop scoring,
+stop rules, and lean specialist gating. Step-default budget is smaller; phase-
+level validation requires explicit "with full 5x5 depth":
 
-- 3 main loops x 3 sub-loops.
+- 3 main loops x 3 sub-loops (step-default).
+- 5 main loops x 5 sub-loops (when user asks "with full 5x5 depth").
+- `target_score = 10` inherited from perfect-loop.
+- Hard ceiling: 9 sub-loops (step-default) or 25 (full). At ceiling without 10 → ⚠ UNREACHABLE_10; offers user to revert `- [x]` to `- [ ]`.
 - `pl-plan-keeper` is always added.
 - Domain specialists still require explicit triggers.
 - Do not call this "Quick"; there are no Quick/Default/Thorough presets.
