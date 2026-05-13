@@ -35,7 +35,6 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
 
   constructor(private readonly config: YandexProviderConfig) {}
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async score(_input: ScoreInput): Promise<ScoreOutput> {
     throw new AIProviderError(
       'YandexAIStudioDeepSeekProvider.score() not implemented in Phase 0',
@@ -43,7 +42,6 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async generateDraft(_input: DraftInput): Promise<DraftOutput> {
     throw new AIProviderError(
       'YandexAIStudioDeepSeekProvider.generateDraft() not implemented in Phase 0',
@@ -51,7 +49,6 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async rewriteDraft(_input: RewriteInput): Promise<DraftOutput | DraftOutput[]> {
     throw new AIProviderError(
       'YandexAIStudioDeepSeekProvider.rewriteDraft() not implemented in Phase 0',
@@ -59,7 +56,6 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async embed(_input: EmbedInput): Promise<EmbedOutput> {
     throw new AIProviderError(
       'YandexAIStudioDeepSeekProvider.embed() not implemented in Phase 0',

@@ -34,7 +34,6 @@ export class IAMTokenCache {
     return this.refreshPromise;
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   private async refresh(): Promise<string> {
     throw new AIProviderError(
       `IAM token refresh not implemented in Phase 0 (endpoint: ${IAM_TOKEN_URL})`,

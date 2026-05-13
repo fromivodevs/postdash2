@@ -28,7 +28,6 @@ const SUMMARY_PREVIEW_CHARS = 400;
 export class TemplateProvider implements AIProvider {
   public readonly name = 'template';
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async score(_input: ScoreInput): Promise<ScoreOutput> {
     return {
       score: 5.0,
@@ -40,18 +39,15 @@ export class TemplateProvider implements AIProvider {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async generateDraft(input: DraftInput): Promise<DraftOutput> {
     return this.buildFormatADraft(input);
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async rewriteDraft(input: RewriteInput): Promise<DraftOutput> {
     // Template fallback не делает rewrite — возвращает Format A на основе исходной новости.
     return this.buildFormatADraft(input);
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await
   async embed(_input: EmbedInput): Promise<EmbedOutput> {
     throw new AIProviderError(
       'TemplateProvider does not support embeddings; use YandexEmbeddings provider',

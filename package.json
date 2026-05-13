@@ -9,7 +9,7 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r --if-present build",
     "dev": "concurrently -n api,worker,miniapp -c blue,magenta,green -k --handle-input \"pnpm dev:api\" \"pnpm dev:worker\" \"pnpm dev:miniapp\"",
     "dev:api": "pnpm --filter @postdash/api dev",
     "dev:miniapp": "pnpm --filter @postdash/miniapp dev",

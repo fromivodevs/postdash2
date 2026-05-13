@@ -7,7 +7,6 @@ export interface ReadyResponse {
   time: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await
 export async function readyRoutes(app: FastifyInstance): Promise<void> {
   // Liveness == /health. Readiness == /ready (pings DB).
   // Orchestrators (Render, Fly, etc.) treat them differently:

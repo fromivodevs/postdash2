@@ -39,8 +39,7 @@ export async function buildApp(
 
   app.setErrorHandler((error, _req, reply) => {
     if (error instanceof AIProviderError) {
-      const status =
-        error.code === 'budget_exceeded' ? 402 : error.code === 'refused' ? 422 : 503;
+      const status = error.code === 'budget_exceeded' ? 402 : error.code === 'refused' ? 422 : 503;
       void reply.status(status).send({
         statusCode: status,
         error: 'AIProviderError',

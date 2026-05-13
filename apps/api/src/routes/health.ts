@@ -8,7 +8,6 @@ export interface HealthResponse {
   time: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
   app.get('/health', (): HealthResponse => {
     return {
