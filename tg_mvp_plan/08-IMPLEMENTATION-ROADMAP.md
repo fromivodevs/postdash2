@@ -3,13 +3,20 @@
 Этот roadmap рассчитан на длинные Claude Code / Codex сессии.
 
 После каждой фазы:
-- commit changes;
+- commit changes (tag `phase-N-<slug>`);
 - run tests;
 - update docs (`PROJECT_MAP.md`, `ARCHITECTURE.md/architecture/*`);
+- **отметить фазу в "Roadmap progress" ниже** — хук `stage-complete-detector` подскажет запустить `/step-perfect-loop` с полной 5×5 глубиной;
 - clear context;
 - start next phase с focused prompt'ом.
 
 Acceptance: каждый чекпоинт включает edge cases из `12-EDGE-CASES.md §15` для соответствующей фазы.
+
+## Convention: чек-боксы только на уровне фаз
+
+- Sub-tasks внутри секции **Tasks** каждой фазы — это обычные bullet points (`-`), без `[ ]/[x]`. Не ставь чек-боксы на каждом микро-таске — это создаёт шум хуков и предложений `/step-perfect-loop` после каждого мелкого изменения.
+- Единственный чек-лист с чек-боксами — секция "Roadmap progress" в конце этого документа. Один `[x]` = одна завершённая фаза.
+- Когда ставишь `- [x] Phase N`, хук `stage-complete-detector` детектит ключевое слово "Phase N" и предлагает: запусти `/step-perfect-loop with full 5x5 depth` — фаза валидируется через lean core + `pl-plan-keeper` (проверка соответствия обещанию плана) + git diff всей фазы.
 
 ## Phase 0 — Project foundation + AI scaffolding
 
@@ -457,18 +464,37 @@ MVP готов для 10–30 early users.
 ## Acceptance checklist per phase
 
 Перед каждым commit'ом фазы:
-- [ ] все tasks из секции "Tasks" завершены;
-- [ ] все tests из секции "Tests" зелёные;
-- [ ] edge cases из `12-EDGE-CASES.md §15` для этой фазы покрыты;
-- [ ] для phase'ов с UI: design-review checklist `13-MINIAPP-DESIGN-SYSTEM.md §15` пройден (dark/light, 3 платформы, slow 4G, a11y, bundle delta);
-- [ ] `PROJECT_MAP.md` обновлён (новые files и systems);
-- [ ] `architecture/<system>.md` создан для каждой новой подсистемы;
-- [ ] миграции применяются на чистой БД и rollback'ом не ломают;
-- [ ] env-vars catalog в `11-AI-PROVIDER.md` обновлён, если добавлены;
-- [ ] нет hardcoded бренд-имён в domain layer;
-- [ ] нет direct Telegram API calls вне `channel-adapters/telegram`;
-- [ ] нет direct LLM SDK calls вне `packages/ai`;
-- [ ] нет hardcoded цветов / spacing вне design tokens из §2 doc 13;
-- [ ] Lighthouse mobile ≥ 90 для Mini App (с Phase 6);
-- [ ] bundle size в пределах budget'а §5 doc 13;
-- [ ] `npm test` / `pytest` / `tsc --noEmit` зелёные.
+- все tasks из секции "Tasks" завершены;
+- все tests из секции "Tests" зелёные;
+- edge cases из `12-EDGE-CASES.md §15` для этой фазы покрыты;
+- для phase'ов с UI: design-review checklist `13-MINIAPP-DESIGN-SYSTEM.md §15` пройден (dark/light, 3 платформы, slow 4G, a11y, bundle delta);
+- `PROJECT_MAP.md` обновлён (новые files и systems);
+- `architecture/<system>.md` создан для каждой новой подсистемы;
+- миграции применяются на чистой БД и rollback'ом не ломают;
+- env-vars catalog в `11-AI-PROVIDER.md` обновлён, если добавлены;
+- нет hardcoded бренд-имён в domain layer;
+- нет direct Telegram API calls вне `channel-adapters/telegram`;
+- нет direct LLM SDK calls вне `packages/ai`;
+- нет hardcoded цветов / spacing вне design tokens из §2 doc 13;
+- Lighthouse mobile ≥ 90 для Mini App (с Phase 6);
+- bundle size в пределах budget'а §5 doc 13;
+- `npm test` / `pytest` / `tsc --noEmit` зелёные;
+- запущен `/step-perfect-loop with full 5x5 depth` (см. "Roadmap progress" ниже), вернул PERFECT или GOOD с принятыми trade-off.
+
+(Чек-боксы намеренно без `[ ]` — это не runtime-чек-лист, а human-readable acceptance criteria. Runtime gate — это step-perfect-loop в конце фазы.)
+
+---
+
+## Roadmap progress
+
+Единственный чек-лист с `- [x]` во всём проекте. Когда фаза закрыта (commit + tests + acceptance checklist), ставь `- [x]` рядом с ней — хук подскажет запустить `/step-perfect-loop` с full 5×5 depth для phase-level validation.
+
+- [ ] Phase 0 — Project foundation + AI scaffolding
+- [ ] Phase 1 — Identity, workspace, Telegram Mini App auth
+- [ ] Phase 2 — Channel connection
+- [ ] Phase 3 — Topics and sources
+- [ ] Phase 4 — Task system, global ingestion, embeddings
+- [ ] Phase 5 — Matching and scoring
+- [ ] Phase 6 — AI draft generation, editor, cost guard
+- [ ] Phase 7 — Safe publishing
+- [ ] Phase 8 — MVP hardening, notifications, source health

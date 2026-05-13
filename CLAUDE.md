@@ -12,8 +12,19 @@
 - pre-flight-check скилл срабатывает на triggering фразы перед
   non-trivial изменениями.
 - bug-hunt: тесты до фикса.
-- Этапы планов помечать `- [x]` — это автоматически запускает
-  step-perfect-loop через хук stage-complete-detector.
+- **Чек-боксы `- [x]` — только на уровне завершения фазы** (секция
+  "Roadmap progress" в `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md`).
+  Под-таски внутри фазы — обычные bullet points без чек-боксов
+  (иначе хук stage-complete-detector предлагает запускать validation
+  на каждый микро-шаг — это шум).
+- Хук `stage-complete-detector` детектит `- [x]`, и:
+  - если текст содержит "Phase N" → подсказывает запустить
+    `/step-perfect-loop with full 5x5 depth` (phase-level validation
+    через lean core + pl-plan-keeper + git diff всей фазы);
+  - иначе → подсказывает `/step-perfect-loop` 3×3 (для редких ad-hoc
+    step-level чек-боксов).
+- Perfect-loop без plan-link — `/perfect-loop`, для крупного artifact'а
+  без привязки к чек-листу.
 - Перед новой системой / фичей >3 файлов — вызывать `architect-designer`,
   результат → `architecture/<system>.md`.
 - Для non-trivial задач сначала использовать `work-router` и правила

@@ -23,10 +23,19 @@ try {
     if ($new_has_x -and -not $old_has_x) {
         $stage_match = [regex]::Match($new_content, '- \[x\] (.+)', 'IgnoreCase')
         $stage = if ($stage_match.Success) { $stage_match.Groups[1].Value.Trim() } else { "unknown stage" }
+
+        $is_phase = $stage -match '(?i)\bphase[ -]?\d+\b'
+
+        if ($is_phase) {
+            $suggestion = "Phase boundary completed: $stage. Run /step-perfect-loop with full 5x5 depth (phase-level validation: lean core + pl-plan-keeper + git diff for the whole phase)."
+        } else {
+            $suggestion = "Step completed: $stage. Run /step-perfect-loop to validate (default 3x3 depth)."
+        }
+
         @{
             hookSpecificOutput = @{
                 hookEventName = "PostToolUse"
-                additionalContext = "Stage completed: $stage. Run /step-perfect-loop to validate."
+                additionalContext = $suggestion
             }
             suppressOutput = $true
         } | ConvertTo-Json -Compress
