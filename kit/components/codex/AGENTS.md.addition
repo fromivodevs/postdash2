@@ -1,0 +1,47 @@
+# Agent Runtime Mapping
+
+This project has Claude/Codex-compatible agent instructions installed.
+
+## Platform Mapping
+
+When a Claude Code concept appears in shared instructions, translate it as follows:
+
+| Shared term | Codex behavior |
+|---|---|
+| `.claude/skills` | `.codex/skills` |
+| `.claude/agents` | `.codex/agents` |
+| `.claude/hooks` | `.codex/hooks` |
+| `.claude/kit` | `.codex/kit` |
+| `AskUserQuestion` | Ask a concise direct question, or use `request_user_input` only when available |
+| `Agent()` | Use Codex subagents only when the user explicitly asks for subagents/parallel agent work; otherwise apply the referenced role locally |
+| `opus` / `claude-opus-*` | `gpt-5.5` |
+| `sonnet` / `claude-sonnet-*` | `gpt-5.4` |
+| `haiku` / `claude-haiku-*` | `gpt-5.4-mini` |
+
+## Codex Subagent Rule
+
+Use `.codex/kit/SUBAGENT_ROUTING.md` to decide when specialist role agents are needed.
+
+This is a standing project-level routing policy. If the runtime permits subagents and a routing trigger is present, use the matching `.codex/agents/<role>.md` roles. If a higher-priority runtime rule prevents spawning, read `.codex/agents/<role>.md` and apply that role locally in the main thread.
+
+Start non-trivial tasks with `work-router` unless the user named a specific skill or agent.
+
+## Install Expectations
+
+The portable setup should create:
+
+- `.codex/skills/*`
+- `.codex/agents/*`
+- `.codex/hooks/*`
+- `.codex/kit/*`
+- `.codex/kit/SUBAGENT_ROUTING.md`
+- root `AGENTS.md` with this runtime mapping section
+- project navigation files if missing: `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`
+
+For Claude Code compatibility, `.claude/*` may also be installed in the same project.
+
+## Encoding
+
+- PowerShell hooks must stay ASCII-only.
+- `.ps1`, `.bat`, `.cmd` should use CRLF.
+- Markdown, JSON, TypeScript, Python, SQL, YAML should use UTF-8 without BOM and LF.

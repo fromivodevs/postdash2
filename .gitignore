@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Build output
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+.parcel-cache/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+.vitest/
+playwright-report/
+test-results/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env / secrets — NEVER commit
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+*.pem
+*.key
+secrets/
+service-account*.json
+
+# Local DB / fixtures
+*.sqlite
+*.sqlite3
+*.db
+
+# Python (на случай если появятся скрипты)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*~
+.fleet/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Claude / Codex runtime artifacts (kit MANIFEST: never commit)
+.claude/perfect-loop-runs/
+.codex/perfect-loop-runs/
+.claude/scheduled_tasks.lock
+.codex/scheduled_tasks.lock
+.claude/settings.local.json
+.codex/settings.local.json
+
+# Misc
+.tmp/
+tmp/
+*.tmp
+*.bak
+*.orig
