@@ -16,10 +16,13 @@ export interface PoolOptions {
 }
 
 export function createPool(databaseUrl: string, opts: PoolOptions = {}): Pool {
+  // connect_timeout=30s: managed Postgres providers (Neon free-tier) may sleep
+  // after idle and need 10-15s to wake on first request. Local Postgres still
+  // fails fast since it's instant when up.
   const client = postgres(databaseUrl, {
     max: opts.max ?? 10,
     idle_timeout: opts.idleTimeoutSec ?? 30,
-    connect_timeout: opts.connectTimeoutSec ?? 5,
+    connect_timeout: opts.connectTimeoutSec ?? 30,
     prepare: false,
   });
   const db = drizzle(client);

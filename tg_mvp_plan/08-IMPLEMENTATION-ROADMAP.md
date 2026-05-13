@@ -489,7 +489,7 @@ MVP готов для 10–30 early users.
 
 Единственный чек-лист с `- [x]` во всём проекте. Когда фаза закрыта (commit + tests + acceptance checklist), ставь `- [x]` рядом с ней — хук подскажет запустить `/step-perfect-loop` с full 5×5 depth для phase-level validation.
 
-- [ ] Phase 0 — Project foundation + AI scaffolding
+- [x] Phase 0 — Project foundation + AI scaffolding
 - [ ] Phase 1 — Identity, workspace, Telegram Mini App auth
 - [ ] Phase 2 — Channel connection
 - [ ] Phase 3 — Topics and sources

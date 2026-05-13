@@ -19,9 +19,28 @@ const env = parseDbEnv();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = join(__dirname, '..', 'migrations');
 
-const client = postgres(env.DATABASE_URL, { max: 1 });
+const client = postgres(env.DATABASE_URL, { max: 1, connect_timeout: 30 });
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function waitForDb(maxAttempts: number): Promise<void> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await client`SELECT 1`;
+      return;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      const waitMs = attempt * 5_000;
+      console.warn(
+        `db connection attempt ${attempt}/${maxAttempts} failed, retrying in ${waitMs}ms (managed Postgres cold start?)`,
+      );
+      await sleep(waitMs);
+    }
+  }
+}
 
 try {
+  await waitForDb(3);
   await client.unsafe(`
     CREATE TABLE IF NOT EXISTS _migrations (
       name text PRIMARY KEY,
