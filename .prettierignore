@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+coverage
+.pnpm-store
+pnpm-lock.yaml
+.claude
+kit
+tg_mvp_plan
+*.md
