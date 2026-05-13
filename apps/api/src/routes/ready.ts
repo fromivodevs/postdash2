@@ -16,7 +16,7 @@ export async function readyRoutes(app: FastifyInstance): Promise<void> {
   app.get('/ready', async (_req, reply): Promise<ReadyResponse> => {
     const now = new Date().toISOString();
     try {
-      await app.pool.client`SELECT 1`;
+      await app.pool.ping();
       return { status: 'ready', db: 'ok', time: now };
     } catch (err) {
       reply.status(503);

@@ -4,6 +4,13 @@ import postgres from 'postgres';
 export interface Pool {
   readonly client: postgres.Sql;
   readonly db: ReturnType<typeof drizzle>;
+  /**
+   * Driver-agnostic liveness probe. Runs `SELECT 1` under the hood, but
+   * routes consuming this should depend on `Pool.ping()`, not on the
+   * concrete postgres.Sql tagged-template shape. Lets us swap the db
+   * driver without touching call sites.
+   */
+  ping(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -29,6 +36,9 @@ export function createPool(databaseUrl: string, opts: PoolOptions = {}): Pool {
   return {
     client,
     db,
+    ping: async () => {
+      await client`SELECT 1`;
+    },
     close: async () => {
       await client.end({ timeout: 5 });
     },
