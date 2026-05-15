@@ -106,22 +106,23 @@ export async function channelsRoute(
     async (req, reply) => {
       const guard = await preflight(app, deps, req, reply, { requireAdapter: false });
       if (!guard.ok) return undefined as never;
-      const { parsed, currentUser } = guard;
+      const { currentUser } = guard;
 
       const buildDeepLink: DeepLinkBuilder = (code) =>
         buildConnectDeepLink(deps.botUsername, code);
 
       try {
         // Idempotency key derived from a stable per-user, per-minute shape:
-        //   cc:<workspace_id>:<user_id>:<auth_date_minute>
-        // The auth_date comes from the verified initData (so it cannot be
-        // spoofed by the client); flooring to whole minutes collapses a
-        // double-click within ~60s onto the same key. A new minute mints a
-        // fresh code, which is the desired UX (the user clicked "Создать
-        // код" again deliberately). Plaintext code is NOT part of the key —
-        // see architecture doc Invariant 1.
-        const authDateMinute = Math.floor(parsed.auth_date / 60);
-        const idempotencyKey = `cc:${currentUser.defaultWorkspace.id}:${currentUser.user.id}:${authDateMinute}`;
+        //   cc:<workspace_id>:<user_id>:<server_clock_minute>
+        // Server-clock minute bucket: dedups double-clicks within a minute,
+        // but advances naturally to allow legitimate re-issue after a minute.
+        // Auth_date is NOT used because it stays constant for the SPA session
+        // lifetime (Telegram sets initData.auth_date once per Mini App launch),
+        // so reusing it would lock the user into a single code per session
+        // until they fully close+reopen the Mini App from Telegram. Plaintext
+        // code is NOT part of the key — see architecture doc Invariant 1.
+        const serverClockMinute = Math.floor(Date.now() / 60_000);
+        const idempotencyKey = `cc:${currentUser.defaultWorkspace.id}:${currentUser.user.id}:${serverClockMinute}`;
 
         const { result } = await createConnectCode(app.pool.db, {
           idempotencyKey,

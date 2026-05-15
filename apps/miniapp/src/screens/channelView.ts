@@ -22,9 +22,28 @@
 
 import type { ChannelListProjection, ChannelProjection, ConnectCodeProjection } from '../api/types.ts';
 
+/**
+ * Screen-local view-model for an in-memory connect code. Two legitimate
+ * sources, distinguished by the `source` discriminant:
+ *
+ *   - `fresh-post`  — POST /channels/connect-codes response, contains the
+ *                     full `ConnectCodeProjection` (id, code, deep_link,
+ *                     expires_at).
+ *   - `deep-link`   — code extracted from `?code=<…>` deep-link query; we
+ *                     don't have expires_at/projection id here, only the
+ *                     plaintext code. Don't pretend to be a real projection.
+ *
+ * Using a discriminated union avoids the previous "synthesise a fake
+ * ConnectCodeProjection with id='deep-link'" pattern, which masqueraded as a
+ * server type while violating ConnectCodeProjectionSchema's UUID constraint.
+ */
+export type PendingCodeViewModel =
+  | { source: 'fresh-post'; projection: ConnectCodeProjection }
+  | { source: 'deep-link'; code: string };
+
 export type ChannelView =
   | { kind: 'not_connected' }
-  | { kind: 'pending'; channel: ChannelProjection | null; code: ConnectCodeProjection | null }
+  | { kind: 'pending'; channel: ChannelProjection | null; code: PendingCodeViewModel | null }
   | { kind: 'connected'; channel: ChannelProjection }
   | { kind: 'broken'; channel: ChannelProjection };
 
@@ -32,11 +51,11 @@ export interface SelectChannelViewInput {
   /** Latest `GET /channels` payload, or null while the query is loading. */
   channels: ChannelListProjection | null;
   /**
-   * Freshly issued code from `POST /channels/connect-codes`, if the user has
-   * just generated one this session. The plaintext code is never re-served by
-   * `GET /channels`, so the screen has to remember it locally.
+   * Freshly issued code from `POST /channels/connect-codes`, or a code
+   * extracted from a deep-link query param. The plaintext code is never
+   * re-served by `GET /channels`, so the screen has to remember it locally.
    */
-  codeOverride: ConnectCodeProjection | null;
+  codeOverride: PendingCodeViewModel | null;
 }
 
 /**

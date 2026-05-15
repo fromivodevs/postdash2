@@ -19,6 +19,7 @@ import {
   parseConnectCodeFromSearch,
   selectChannelView,
   verifyStatusCopy,
+  type PendingCodeViewModel,
 } from '../channelView.ts';
 import type { ChannelListProjection, ChannelProjection, ConnectCodeProjection } from '../../api/types.ts';
 
@@ -47,7 +48,7 @@ function buildList(items: ChannelProjection[]): ChannelListProjection {
   return { items };
 }
 
-function buildCode(code: string): ConnectCodeProjection {
+function buildProjection(code: string): ConnectCodeProjection {
   return {
     id: '00000000-0000-0000-0000-000000000001',
     code,
@@ -56,7 +57,25 @@ function buildCode(code: string): ConnectCodeProjection {
   };
 }
 
+function buildCode(code: string): PendingCodeViewModel {
+  return { source: 'fresh-post', projection: buildProjection(code) };
+}
+
 describe('selectChannelView', () => {
+  it('exposes a deep-link-sourced codeOverride via the discriminated view-model', () => {
+    // Deep-link sources only have the plaintext code (no projection id /
+    // expires_at), so the view-model's `deep-link` arm must surface it
+    // verbatim and the selector must keep the union shape intact.
+    const view = selectChannelView({
+      channels: buildList([]),
+      codeOverride: { source: 'deep-link', code: 'DEEPLINK1' },
+    });
+    expect(view.kind).toBe('pending');
+    if (view.kind === 'pending') {
+      expect(view.code).toEqual({ source: 'deep-link', code: 'DEEPLINK1' });
+    }
+  });
+
   it('renders NotConnectedView when GET /channels returns empty and there is no fresh code', () => {
     const view = selectChannelView({ channels: buildList([]), codeOverride: null });
     expect(view.kind).toBe('not_connected');

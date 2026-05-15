@@ -49,6 +49,7 @@ import {
   parseConnectCodeFromSearch,
   selectChannelView,
   verifyStatusCopy,
+  type PendingCodeViewModel,
 } from './channelView.ts';
 
 const CHANNELS_QUERY_KEY = ['channels'] as const;
@@ -69,10 +70,12 @@ export function ChannelScreen(): ReactNode {
     enabled: Boolean(initData),
   });
 
-  // Plaintext code lives only in the POST response. Cache it locally so the
-  // user keeps seeing it across re-renders until the connect succeeds or they
-  // navigate away.
-  const [codeOverride, setCodeOverride] = useState<ConnectCodeProjection | null>(null);
+  // Plaintext code lives only in the POST response (or a `?code=` deep-link
+  // query param). Cache it locally so the user keeps seeing it across
+  // re-renders until the connect succeeds or they navigate away. The
+  // discriminated union prevents the deep-link path from masquerading as a
+  // server-shaped `ConnectCodeProjection` (no fake UUIDs).
+  const [codeOverride, setCodeOverride] = useState<PendingCodeViewModel | null>(null);
   // `external_chat_id` input. Pre-filled from the `?code=...` deep-link param
   // on first mount when present (architecture line 614).
   const [chatIdInput, setChatIdInput] = useState('');
@@ -88,20 +91,12 @@ export function ChannelScreen(): ReactNode {
   }, []);
 
   // Seed the codeOverride from the deep-link so PendingView shows the code the
-  // user already has in their share link. We don't have `deep_link`/`expires_at`
-  // server-side here (the deep-link is the source of truth on its own), so we
-  // synthesise a minimal projection — the screen only reads `.code` from it.
+  // user already has in their share link. We only have the plaintext code
+  // here (no projection id / expires_at), so we model the deep-link source as
+  // its own union arm rather than synthesising a fake projection.
   useEffect(() => {
     if (deepLinkCode && !codeOverride) {
-      const synthesised: ConnectCodeProjection = {
-        id: 'deep-link', // not a real uuid; never sent back to the server
-        code: deepLinkCode,
-        deep_link: miniappEnv.VITE_TELEGRAM_BOT_USERNAME
-          ? buildConnectDeepLink(miniappEnv.VITE_TELEGRAM_BOT_USERNAME, deepLinkCode)
-          : '',
-        expires_at: '',
-      };
-      setCodeOverride(synthesised);
+      setCodeOverride({ source: 'deep-link', code: deepLinkCode });
     }
   }, [deepLinkCode, codeOverride]);
 
@@ -111,7 +106,7 @@ export function ChannelScreen(): ReactNode {
       return postConnectCode(initData);
     },
     onSuccess: (data) => {
-      setCodeOverride(data);
+      setCodeOverride({ source: 'fresh-post', projection: data });
       setConnectError(null);
     },
     onError: () => {
@@ -168,15 +163,21 @@ export function ChannelScreen(): ReactNode {
   }
 
   if (view.kind === 'pending') {
+    const plaintextCode =
+      view.code === null
+        ? null
+        : view.code.source === 'fresh-post'
+          ? view.code.projection.code
+          : view.code.code;
     return (
       <PendingView
         code={view.code}
         chatIdInput={chatIdInput}
         onChatIdInput={setChatIdInput}
         onConnect={() => {
-          if (!view.code) return;
+          if (!plaintextCode) return;
           connectMutation.mutate({
-            code: view.code.code,
+            code: plaintextCode,
             external_chat_id: chatIdInput.trim(),
           });
         }}
@@ -244,7 +245,7 @@ function NotConnectedView({ onCreateCode, creating }: NotConnectedViewProps): Re
 }
 
 interface PendingViewProps {
-  code: ConnectCodeProjection | null;
+  code: PendingCodeViewModel | null;
   chatIdInput: string;
   onChatIdInput: (value: string) => void;
   onConnect: () => void;
@@ -265,16 +266,25 @@ function PendingView({
   creatingNewCode,
 }: PendingViewProps): ReactNode {
   // Compose deep-link locally: prefer the server-supplied `deep_link` (fresh
-  // POST /channels/connect-codes response), fall back to building one from the
-  // configured bot username for the synthetic deep-link path.
+  // POST /channels/connect-codes response), fall back to building one from
+  // the configured bot username for the deep-link source path (where we only
+  // have the plaintext code).
+  const plaintextCode = code === null
+    ? null
+    : code.source === 'fresh-post'
+      ? code.projection.code
+      : code.code;
+
   const deepLink = useMemo(() => {
     if (!code) return '';
-    if (code.deep_link) return code.deep_link;
-    if (miniappEnv.VITE_TELEGRAM_BOT_USERNAME && code.code) {
-      return buildConnectDeepLink(miniappEnv.VITE_TELEGRAM_BOT_USERNAME, code.code);
+    if (code.source === 'fresh-post' && code.projection.deep_link) {
+      return code.projection.deep_link;
+    }
+    if (miniappEnv.VITE_TELEGRAM_BOT_USERNAME && plaintextCode) {
+      return buildConnectDeepLink(miniappEnv.VITE_TELEGRAM_BOT_USERNAME, plaintextCode);
     }
     return '';
-  }, [code]);
+  }, [code, plaintextCode]);
 
   const errBanner = error ? channelErrorCopy(error.code) : null;
   const dead = error ? isDeadCodeError(error.code) : false;
@@ -286,11 +296,11 @@ function PendingView({
           header="Код подключения"
           description="Передай этот код боту через deep-link или введи @username канала вручную."
         />
-        {code && (
+        {plaintextCode && (
           <div className="channel-pending__code">
             <p className="channel-pending__code-label">Код:</p>
             <pre className="channel-pending__code-value" aria-label="Код подключения">
-              {code.code}
+              {plaintextCode}
             </pre>
             {deepLink && (
               <CopyButton value={deepLink} label="Скопировать ссылку" successText="Скопировано" />
