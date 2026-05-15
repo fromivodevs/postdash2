@@ -8,6 +8,19 @@
  */
 
 /**
+ * Maximum length for an external chat identifier accepted from the client.
+ *
+ * Telegram numeric chat_ids serialise to at most ~14 characters, and the
+ * `@username` form is capped at 32 by Telegram itself; 64 leaves comfortable
+ * headroom for any future format without admitting a flood of junk. Exported
+ * so the HTTP boundary (`apps/api/src/routes/channels.ts`) and the command
+ * boundary (`connectTelegramChannel`) share ONE cap — a drift between the two
+ * would surface oversize input as a generic 400 at one layer instead of the
+ * specific channel error at the other.
+ */
+export const MAX_EXTERNAL_CHAT_ID_LEN = 64;
+
+/**
  * Discriminator for the per-platform channel adapter. Phase 2 only supports
  * `'telegram'`; future platforms (`'vk'`, `'discord'`) extend this union AND
  * the `content_channels.platform` CHECK constraint via a new migration.

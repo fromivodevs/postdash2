@@ -32,6 +32,7 @@ import {
   type ChannelListProjection,
 } from '@postdash/shared';
 import {
+  assertWorkspaceRole,
   CommandError,
   connectTelegramChannel,
   createConnectCode,
@@ -39,6 +40,7 @@ import {
   type TelegramChannelAdapter,
 } from '@postdash/commands';
 import {
+  MAX_EXTERNAL_CHAT_ID_LEN,
   narrowChannelType,
   narrowConnectionStatus,
   narrowVerifyStatus,
@@ -76,7 +78,11 @@ export interface ChannelsRouteDeps {
 
 const ConnectBodySchema = z.object({
   code: z.string().min(1).max(64),
-  external_chat_id: z.string().min(1).max(128),
+  // Align with the command layer's cap (see `@postdash/domain` channel.ts).
+  // Keeping these in sync ensures an oversize input surfaces as a uniform
+  // 400 here rather than passing this layer and tripping the command's Zod
+  // check with a generic CommandError downstream.
+  external_chat_id: z.string().min(1).max(MAX_EXTERNAL_CHAT_ID_LEN),
 });
 
 export async function channelsRoute(
@@ -212,6 +218,24 @@ export async function channelsRoute(
           },
         );
 
+        // Defense-in-depth against cross-caller Idempotency-Key replay.
+        // `runIdempotent` keys solely on `(commandType, idempotencyKey)` and
+        // `loadFromPointer` re-reads the cached channel_connection row WITHOUT
+        // re-checking the caller's workspace. If user A's Idempotency-Key
+        // leaks (browser HAR / devtools), user B in a DIFFERENT workspace
+        // could replay it with their own verified initData and otherwise
+        // receive A's channel projection. We reject any response whose
+        // workspace does not match the verified caller's workspace here,
+        // BEFORE projecting + sending. The actual fix-out-of-leak is on the
+        // caller (rotate the key), but we never leak the cross-workspace row.
+        if (result.channelConnection.workspaceId !== currentUser.defaultWorkspace.id) {
+          throw new CommandError(
+            'forbidden',
+            'cross-workspace idempotency-key replay denied',
+            { code: 'cross_workspace_replay' },
+          );
+        }
+
         const projection = projectChannel({
           connection: result.channelConnection,
           contentChannel: result.contentChannel,
@@ -246,6 +270,20 @@ export async function channelsRoute(
       const { currentUser } = guard;
 
       try {
+        // Role gate: every reader must be at least a 'viewer' of the workspace.
+        // `readCurrentUser` only proves "this Telegram user has SOME default
+        // workspace" — it does NOT prove their membership in that workspace is
+        // still active. A user whose membership flipped to 'removed' between
+        // sessions would otherwise still list channels until the next default-
+        // workspace recompute. `assertWorkspaceRole` throws
+        // `CommandError('forbidden', ...)` on miss → 403 via the default table.
+        await assertWorkspaceRole(
+          app.pool.db,
+          currentUser.defaultWorkspace.id,
+          currentUser.user.id,
+          'viewer',
+        );
+
         // JOIN content_channels for the workspace's bindings. Status filter
         // intentionally omits 'revoked' (Phase 2 never sets it, but a future
         // re-verification flip might) — keeping it inclusive for now so the

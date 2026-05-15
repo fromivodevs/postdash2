@@ -82,6 +82,15 @@ const CHANNEL_DETAILS_TABLE: Record<string, SanitizedCommandError | null> = {
   // capability surface — a future bot-driven connect endpoint would need them.
   bot_user_unknown: { status: 403, message: 'bot user not recognised' },
   bot_user_inactive: { status: 403, message: 'bot user not active' },
+  // Defense-in-depth: caller's verified workspace did not match the workspace
+  // the connect bound. Happens when an Idempotency-Key from user A is replayed
+  // by user B in a different workspace and the route's post-command check
+  // rejects the cached projection. Raised by the route AFTER the command
+  // returns; the command itself does not produce this code.
+  cross_workspace_replay: {
+    status: 403,
+    message: 'access denied',
+  },
 };
 
 /**

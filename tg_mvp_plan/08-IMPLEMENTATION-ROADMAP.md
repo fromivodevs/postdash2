@@ -165,7 +165,7 @@ Backend идентифицирует Telegram users и создаёт workspace.
 - `CreateConnectCodeCommand` (idempotent through `command_idempotency`):
   - TTL 30 минут;
   - one-time use;
-- `ConnectTelegramChannelCommand` через bot `/start connect_<code>` payload **И** через ручной ввод в Mini App;
+- `ConnectTelegramChannelCommand` через ручной ввод в Mini App; bot `/start connect_<code>` валидирует код (replyies with status) и роутит пользователя в Mini App для завершения. См. `architecture/channel-connection.md` Decision 6 — Telegram does not deliver channel chat_id в private /start updates, поэтому фактический bind всегда происходит в Mini App после ввода `@username` или numeric chat_id.
 - Telegram adapter `verifyConnection`:
   - `getChatMember` для bot;
   - проверка `can_post_messages=true`;
@@ -190,7 +190,7 @@ Backend идентифицирует Telegram users и создаёт workspace.
 ### Done when
 - user может создать connect code;
 - добавить бота админом и activate code через bot OR Mini App;
-- канал виден connected.
+- канал виден connected (после завершения в Mini App).
 
 ### Commit
 `phase-2-channel-connection`

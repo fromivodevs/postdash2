@@ -29,6 +29,7 @@
 import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
 import {
+  MAX_EXTERNAL_CHAT_ID_LEN,
   narrowChannelType,
   narrowConnectionStatus,
   narrowVerifyStatus,
@@ -92,7 +93,7 @@ export interface TelegramChannelAdapter {
 export const ConnectTelegramChannelInputSchema = z.object({
   idempotencyKey: z.string().min(1).max(200),
   code: z.string().min(6).max(20),
-  externalChatId: z.string().min(1).max(64),
+  externalChatId: z.string().min(1).max(MAX_EXTERNAL_CHAT_ID_LEN),
   invokedBy: z.union([
     z.object({ source: z.literal('bot'), telegramUserId: z.number().int() }),
     z.object({ source: z.literal('miniapp'), userId: z.string().uuid() }),
@@ -122,11 +123,22 @@ export async function connectTelegramChannel(
   }
   const validated = parsed.data;
 
+  // Pre-tx `userId` correlation: for the Mini App path the connecting user is
+  // known up-front (verified by initData), so the idempotency row carries it
+  // from INSERT. For the bot path we only learn the userId after an in-tx
+  // `telegram_identities` lookup, so it stays null at INSERT and is backfilled
+  // via `execute()` metadata below. `workspaceId` is always learned in-tx
+  // (it lives on the connect-code row, not the input) and is likewise
+  // backfilled — see `metadata` on the execute() return.
+  const upfrontUserId =
+    validated.invokedBy.source === 'miniapp' ? validated.invokedBy.userId : null;
+
   return runIdempotent<ConnectTelegramChannelResult>(
     db,
     {
       commandType: COMMAND_TYPE,
       idempotencyKey: validated.idempotencyKey,
+      userId: upfrontUserId,
     },
     {
       execute: async (tx) => {
@@ -135,6 +147,15 @@ export async function connectTelegramChannel(
           objectType: 'channel_connection',
           objectId: out.channelConnection.id,
           result: out,
+          // Forensic-correlation metadata: surface the actual workspace + user
+          // the connect bound, so the idempotency row reflects them even when
+          // the upfront ctx values were null (bot path) or pre-lookup. NOT a
+          // security control — the route layer enforces caller-vs-actual
+          // workspace match before responding (defense-in-depth).
+          metadata: {
+            workspaceId: out.workspaceId,
+            userId: out.channelConnection.connectedByUserId,
+          },
         };
       },
       loadFromPointer: async ({ objectId }) => loadConnectionById(db, objectId),

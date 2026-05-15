@@ -548,6 +548,8 @@ describe('GET /channels', () => {
         [IDENTITY_ROW],
         [USER_ROW],
         [MEMBER_JOIN_ROW],
+        // assertWorkspaceRole role gate: returns the caller's membership.
+        [ADMIN_MEMBERSHIP_ROW],
         // The list query's JOIN row shape uses the aliases declared in
         // channels.ts: `{ connection, content_channel }`.
         [{ connection: connectionRow, content_channel: contentChannelRow }],
@@ -585,7 +587,14 @@ describe('GET /channels', () => {
 
   it('200 returns empty list when the workspace has no channels', async () => {
     const fake = makeFakePool({
-      selectResults: [[IDENTITY_ROW], [USER_ROW], [MEMBER_JOIN_ROW], []],
+      selectResults: [
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW],
+        // assertWorkspaceRole role gate.
+        [ADMIN_MEMBERSHIP_ROW],
+        [],
+      ],
     });
     app = await buildApp(
       withTestEnv({
@@ -607,5 +616,142 @@ describe('GET /channels', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { items: unknown[] };
     expect(body.items).toEqual([]);
+  });
+
+  it('403 when caller is not a member of the default workspace (role gate)', async () => {
+    // `readCurrentUser` succeeded (workspace+member JOIN found a row above),
+    // but the `assertWorkspaceRole(... 'viewer')` re-check inside the GET
+    // handler reads a fresh membership snapshot and finds no row (e.g. a
+    // concurrent admin removed this user mid-session). The route must
+    // surface 403 rather than leaking the channel list.
+    const fake = makeFakePool({
+      selectResults: [
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW],
+        // assertWorkspaceRole role gate: no row -> 'forbidden'.
+        [],
+      ],
+    });
+    app = await buildApp(
+      withTestEnv({
+        TELEGRAM_BOT_TOKEN: BOT_TOKEN,
+        TELEGRAM_BOT_USERNAME: BOT_USERNAME,
+      }),
+      { pool: fake.pool },
+    );
+    const res = await app.inject({
+      method: 'GET',
+      url: '/channels',
+      headers: {
+        authorization: signedHeader({
+          user: JSON.stringify({ id: TG_USER_ID, first_name: 'Alice' }),
+          auth_date: String(freshAuthDate()),
+        }),
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    const body = res.json() as Record<string, unknown>;
+    expect(body['code']).toBe('forbidden');
+  });
+});
+
+// ============================================================================
+// Cross-workspace Idempotency-Key replay (Fix A defense-in-depth)
+// ============================================================================
+describe('POST /channels/connect — cross-workspace replay', () => {
+  it('403 with code=cross_workspace_replay when the cached connection belongs to a different workspace', async () => {
+    // Setup: the command-layer cache returns a `channelConnection` bound to
+    // OTHER_WORKSPACE_ID, but the caller's verified `defaultWorkspace.id` is
+    // WORKSPACE_ID. The route MUST reject before sending the projection.
+    const OTHER_WORKSPACE_ID = '99999999-9999-9999-9999-999999999999';
+    const activeCodeRow = {
+      id: CONNECT_CODE_ID,
+      workspaceId: OTHER_WORKSPACE_ID,
+      createdByUserId: USER_ID,
+      status: 'active',
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const upsertedChannelRow = {
+      id: CONTENT_CHANNEL_ID,
+      platform: 'telegram',
+      externalId: '-1009999999999',
+      type: 'channel',
+      title: 'Other',
+      username: 'other',
+      photoUrl: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const insertedConnectionRow = {
+      id: CONNECTION_ID,
+      workspaceId: OTHER_WORKSPACE_ID,
+      contentChannelId: CONTENT_CHANNEL_ID,
+      status: 'connected',
+      canPostMessages: true,
+      lastVerifyStatus: 'ok',
+      lastVerifyError: null,
+      lastVerifiedAt: NOW,
+      connectedAt: NOW,
+      connectedByUserId: USER_ID,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    // Simulate the case where the command runs to completion against the
+    // wrong workspace (e.g. an attacker who has admin role on OTHER_WORKSPACE
+    // crafts an Idempotency-Key shared with this caller, OR a stale cached
+    // pointer that resolves to a different workspace's row). The route's
+    // post-command check must fail closed.
+    const fake = makeFakePool({
+      selectResults: [
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW], // caller defaultWorkspace = WORKSPACE_ID
+        [activeCodeRow],
+        [{ role: 'admin', status: 'active' }], // assertWorkspaceRole inside doConnect against OTHER_WORKSPACE
+      ],
+      insertResults: [
+        [{ id: 'idem-1' }], // runIdempotent slot
+        [upsertedChannelRow], // upsert content_channels
+        [insertedConnectionRow], // insert channel_connections
+        [], // operation_log
+      ],
+      updateResults: [
+        [], // consume code
+        [{ id: 'idem-1' }], // runIdempotent: mark success
+      ],
+    });
+    const adapter = makeAdapter({
+      ok: true,
+      externalId: '-1009999999999',
+      title: 'Other',
+      username: 'other',
+      photoUrl: null,
+      chatType: 'channel',
+      canPostMessages: true,
+    });
+    app = await buildApp(
+      withTestEnv({
+        TELEGRAM_BOT_TOKEN: BOT_TOKEN,
+        TELEGRAM_BOT_USERNAME: BOT_USERNAME,
+      }),
+      { pool: fake.pool, channelAdapter: adapter },
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/channels/connect',
+      headers: {
+        authorization: signedHeader({
+          user: JSON.stringify({ id: TG_USER_ID, first_name: 'Alice' }),
+          auth_date: String(freshAuthDate()),
+        }),
+        'idempotency-key': 'leaked-key-1',
+        'content-type': 'application/json',
+      },
+      payload: { code: 'LEAKED12', external_chat_id: '@otherchan' },
+    });
+    expect(res.statusCode).toBe(403);
+    const body = res.json() as Record<string, unknown>;
+    expect(body['code']).toBe('cross_workspace_replay');
   });
 });

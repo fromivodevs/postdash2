@@ -66,11 +66,23 @@ export interface IdempotentWork<T> {
    * the slot's success-UPDATE — all DB writes the work performs MUST go
    * through this `tx` so they commit atomically with the slot transition.
    * Return { object_type, object_id, result }.
+   *
+   * The optional `metadata` shape lets a command surface the workspace/user
+   * it ultimately acted on AFTER the in-tx lookups that resolve them (e.g.
+   * `connectTelegramChannel` reads `workspaceId` from the connect-code row,
+   * not from the input). When provided, those values are written to the
+   * slot's pending->success UPDATE so the row carries accurate forensic
+   * correlation. NOT a security control on its own (the route layer enforces
+   * the caller-vs-actual workspace check) — purely audit metadata.
    */
   execute(tx: DbOrTx): Promise<{
     objectType: string;
     objectId: string;
     result: T;
+    metadata?: {
+      workspaceId?: string | null;
+      userId?: string | null;
+    };
   }>;
   /** Reconstruct T from a cached (object_type, object_id) pointer on replay. */
   loadFromPointer(pointer: { objectType: string; objectId: string }): Promise<T>;
@@ -226,14 +238,35 @@ async function runIdempotentInternal<T>(
       // too: nothing must commit under a slot we no longer own. On success we
       // extend expires_at from the short PENDING_TTL out to the full
       // success-TTL so the cached result survives for replay.
+      // Backfill workspace_id / user_id on the slot row from execute()'s
+      // metadata when present. The row already received whatever was passed in
+      // `ctx` at INSERT time; execute() may surface a more accurate value once
+      // in-tx lookups have run (e.g. connect-code -> workspaceId). The UPDATE
+      // is unconditional on the metadata fields so a command that only learns
+      // these in-tx can still record them — Drizzle's `.set()` omits undefined
+      // keys, so leaving metadata absent is a true no-op.
+      const slotPatch: {
+        status: 'success';
+        resultObjectType: string;
+        resultObjectId: string;
+        expiresAt: Date;
+        workspaceId?: string | null;
+        userId?: string | null;
+      } = {
+        status: 'success',
+        resultObjectType: result.objectType,
+        resultObjectId: result.objectId,
+        expiresAt: new Date(Date.now() + ttlHours * 3_600_000),
+      };
+      if (result.metadata?.workspaceId !== undefined) {
+        slotPatch.workspaceId = result.metadata.workspaceId;
+      }
+      if (result.metadata?.userId !== undefined) {
+        slotPatch.userId = result.metadata.userId;
+      }
       const updated = await tx
         .update(commandIdempotency)
-        .set({
-          status: 'success',
-          resultObjectType: result.objectType,
-          resultObjectId: result.objectId,
-          expiresAt: new Date(Date.now() + ttlHours * 3_600_000),
-        })
+        .set(slotPatch)
         .where(
           and(eq(commandIdempotency.id, ownedId), eq(commandIdempotency.status, 'pending')),
         )
