@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TELEGRAM_POST_MAX_LENGTH } from '@postdash/shared';
 import { TemplateProvider } from '../providers/template.js';
 import {
   AIProviderError,
@@ -89,5 +90,68 @@ describe('TemplateProvider', () => {
     };
     const out = await provider.generateDraft(input);
     expect(out.post_text.length).toBeLessThan(longText.length);
+  });
+
+  it('generateDraft truncation is surrogate-pair-safe (no lone surrogates from emoji)', async () => {
+    // Title is a long run of an emoji whose UTF-16 representation is a surrogate
+    // pair ('😀' for '😀', 2 code units each). A naive `String#slice`
+    // on the resulting `rawText` may cut the boundary inside a pair, producing
+    // a lone surrogate. We assert (a) no orphan surrogates remain, and (b) a
+    // UTF-8 encode/decode roundtrip is a no-op (lossless), which is the
+    // canonical check for well-formed UTF-16.
+    const emoji = '😀';
+    const hugeTitle = emoji.repeat(TELEGRAM_POST_MAX_LENGTH);
+    const input: DraftInput = {
+      workspace_id: WORKSPACE,
+      topic_profile: baseTopic,
+      tone_profile: baseTopic.tone_profile,
+      news: {
+        title: hugeTitle,
+        url: 'https://example.com/emoji',
+        summary: undefined,
+      },
+      format: 'short_news',
+      language: 'ru',
+    };
+    const out = await provider.generateDraft(input);
+
+    // No lone surrogates: every high surrogate (D800..DBFF) must be followed by
+    // a low surrogate (DC00..DFFF), and no low surrogate may appear unpaired.
+    for (let i = 0; i < out.post_text.length; i++) {
+      const code = out.post_text.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = out.post_text.charCodeAt(i + 1);
+        expect(next).toBeGreaterThanOrEqual(0xdc00);
+        expect(next).toBeLessThanOrEqual(0xdfff);
+        i++; // skip the low surrogate we just verified
+      } else {
+        expect(code < 0xdc00 || code > 0xdfff).toBe(true);
+      }
+    }
+
+    // UTF-8 roundtrip: lossless iff input is well-formed UTF-16.
+    expect(Buffer.from(out.post_text, 'utf8').toString('utf8')).toBe(out.post_text);
+  });
+
+  it('generateDraft caps post_text at TELEGRAM_POST_MAX_LENGTH with ellipsis when title is huge', async () => {
+    // Title alone exceeds the cap → final post_text must be truncated and
+    // still pass DraftOutputSchema.parse (provider contract).
+    const hugeTitle = 'Z'.repeat(TELEGRAM_POST_MAX_LENGTH + 500);
+    const input: DraftInput = {
+      workspace_id: WORKSPACE,
+      topic_profile: baseTopic,
+      tone_profile: baseTopic.tone_profile,
+      news: {
+        title: hugeTitle,
+        url: 'https://example.com/huge',
+        summary: 'tail summary',
+      },
+      format: 'short_news',
+      language: 'ru',
+    };
+    const out = await provider.generateDraft(input);
+    const parsed = DraftOutputSchema.parse(out);
+    expect(parsed.post_text.length).toBe(TELEGRAM_POST_MAX_LENGTH);
+    expect(parsed.post_text.endsWith('…')).toBe(true);
   });
 });

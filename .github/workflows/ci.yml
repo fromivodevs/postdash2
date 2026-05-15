@@ -47,3 +47,7 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Mini App bundle-size budget (design-system §5/§13: >10% gzip growth blocks the PR).
+      - name: Mini App bundle-size budget
+        run: node apps/miniapp/scripts/check-bundle-size.mjs

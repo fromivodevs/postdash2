@@ -9,6 +9,21 @@
 
 ## Workflow
 
+- Phase branches are cumulative and mandatory for phase validation:
+  - `phase/base` is the baseline before Phase 0 when available.
+  - `phase/0-foundation` contains only Phase 0.
+  - `phase/1-identity` contains Phase 0 plus Phase 1.
+  - `phase/N-<slug>` contains phases `0..N`, and no later phase.
+- Run phase-level `step-perfect-loop` only from the matching `phase/N-*` branch.
+  Use the phase-only branch diff as the artifact:
+  - Phase 0: `phase/base..phase/0-foundation`
+  - Phase N: `phase/(N-1)-<slug>..phase/N-<slug>`
+- Every phase commit subject starts with `[phase N]`, `[phase N fix]`,
+  `[phase N loop]`, or `[phase N docs]`.
+- If Phase K needs a fix after later phases exist, commit it first on
+  `phase/K-*`, then propagate the same logical fix forward into every branch
+  that includes Phase K and finally `main`. Do not propagate it backward.
+
 - pre-flight-check скилл срабатывает на triggering фразы перед
   non-trivial изменениями.
 - bug-hunt: тесты до фикса.

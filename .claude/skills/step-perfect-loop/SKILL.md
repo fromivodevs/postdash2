@@ -10,6 +10,8 @@ trigger_patterns:
 # Step Perfect Loop
 
 > See `perfect-loop` skill for base mechanics. Этот скилл наследует ВСЁ из perfect-loop, добавляя только plan-aware логику и pl-plan-keeper.
+>
+> **Orchestrator tooling** — критично! Внутри одного main_loop sub_loops запускаются через `SendMessage(to=<agentId>)` к ТЕМ ЖЕ агентам. Только при переходе main_loop N → N+1 спавнятся новые `Agent()`. См. секцию "Orchestrator tooling: Agent() vs SendMessage" в `perfect-loop` SKILL.
 
 ## Отличия от perfect-loop
 

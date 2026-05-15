@@ -1,0 +1,68 @@
+/*
+ * Design tokens — see tg_mvp_plan/13-MINIAPP-DESIGN-SYSTEM.md §2.
+ *
+ * Telegram theme variables (--tg-theme-*) stay the PRIMARY source of color:
+ * they are injected by the Telegram client and flip automatically on
+ * light/dark. We only add the few semantic accents the kit does not provide,
+ * plus the spacing/radius scale so screens never hardcode pixel values.
+ *
+ * Rule (CLAUDE.md / §2): никаких хардкод-цветов вне этого файла.
+ */
+
+:root {
+  /* Spacing scale — 4px base (§2). */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px; /* base padding */
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Radii (§2). */
+  --radius-sm: 8px; /* badges, chips */
+  --radius-md: 12px; /* cards, buttons */
+  --radius-lg: 16px; /* modals, sheets */
+
+  /* Semantic accent colors (§2). Everything else comes from --tg-theme-*. */
+  --color-success: #34c759; /* score 7+, status published */
+  --color-warning: #ff9500; /* score 5-7, status pending */
+  --color-danger: #ff3b30; /* errors, destructive */
+  --color-info: var(--tg-theme-button-color, var(--color-link-fallback));
+  --color-on-danger: #ffffff; /* text/icon on a --color-danger fill */
+
+  /*
+   * Fallbacks for the Telegram theme variables (§2). The Telegram client
+   * injects --tg-theme-* at runtime; these tokens are the ONLY place the
+   * literal hex values live, so screens/index.css reference a token instead
+   * of hardcoding a color outside this file.
+   */
+  --color-surface-fallback: #ffffff; /* --tg-theme-bg-color fallback */
+  --color-surface-secondary-fallback: #f0f0f0; /* --tg-theme-secondary-bg-color fallback */
+  --color-text-fallback: #1f1f1f; /* --tg-theme-text-color fallback */
+  --color-hint-fallback: #707579; /* --tg-theme-hint-color fallback */
+  --color-link-fallback: #2481cc; /* --tg-theme-link-color / button-color fallback */
+  --color-on-button-fallback: #ffffff; /* --tg-theme-button-text-color fallback */
+  --color-backdrop: rgba(0, 0, 0, 0.45); /* modal scrim */
+
+  /* Minimum touch target (§8 — Apple HIG 44x44). */
+  --touch-target-min: 44px;
+}
+
+/*
+ * Reduced motion (§11): disable all transitions/animations for users who
+ * asked the OS to minimise motion. Applies globally so no screen has to
+ * remember to opt in.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

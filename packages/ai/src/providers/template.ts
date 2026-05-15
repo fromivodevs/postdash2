@@ -1,3 +1,4 @@
+import { TELEGRAM_POST_MAX_LENGTH } from '@postdash/shared';
 import {
   AIProviderError,
   type AIProvider,
@@ -59,7 +60,20 @@ export class TemplateProvider implements AIProvider {
     const { news } = input;
     const summary = news.summary ?? this.firstChars(news.extracted_text, SUMMARY_PREVIEW_CHARS);
     const body = summary ? `Кратко: ${summary}\n\n` : '';
-    const post_text = `Новость: ${news.title}\n\n${body}Источник: ${news.url}`.trim();
+    const rawText = `Новость: ${news.title}\n\n${body}Источник: ${news.url}`.trim();
+    // MVP-only Telegram cap: TemplateProvider is the no-AI fallback and ships
+    // only with the Telegram channel adapter in Phase 2. Enforced here (vs in
+    // DraftOutputSchema) so generic AI contract stays channel-agnostic.
+    //
+    // Code-point-safe truncation: `String#slice` operates on UTF-16 code units,
+    // so cutting at position N can split a surrogate pair (emoji, supplementary
+    // plane char) and leave a lone surrogate. The resulting string is invalid
+    // UTF-16 and Telegram Bot API may reject it. Spread the string into an array
+    // of code points first so the cut lands on a character boundary.
+    const post_text =
+      rawText.length > TELEGRAM_POST_MAX_LENGTH
+        ? `${[...rawText].slice(0, TELEGRAM_POST_MAX_LENGTH - 1).join('')}…`
+        : rawText;
 
     return {
       title: news.title,
@@ -74,6 +88,11 @@ export class TemplateProvider implements AIProvider {
 
   private firstChars(text: string | undefined, n: number): string | undefined {
     if (!text) return undefined;
-    return text.length > n ? `${text.slice(0, n).trimEnd()}…` : text;
+    // Code-point-safe: `String#slice` cuts on UTF-16 code units and can split a
+    // surrogate pair (emoji etc), leaving a lone surrogate. Spread into code
+    // points first so the cut lands on a character boundary.
+    if (text.length <= n) return text;
+    const truncated = [...text].slice(0, n).join('').trimEnd();
+    return `${truncated}…`;
   }
 }

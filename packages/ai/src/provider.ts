@@ -39,6 +39,8 @@ export type ScoreInput = z.infer<typeof ScoreInputSchema>;
 
 export const ScoreOutputSchema = z.object({
   score: z.number().min(0).max(10),
+  // soft UX cap on reason line length (~tweet-length); ensures Mini App cards
+  // render without truncation
   relevance_reason: z.string().max(280),
   should_create_draft: z.boolean(),
   risk_flags: z.array(z.string()),
@@ -57,9 +59,16 @@ export const DraftInputSchema = z.object({
 });
 export type DraftInput = z.infer<typeof DraftInputSchema>;
 
+// post_text is channel-agnostic — no length cap here. Per-channel length
+// validation lives in channel adapters (e.g. `packages/channel-adapters/telegram`
+// enforces TELEGRAM_POST_MAX_LENGTH at publish time, exposed today as
+// `fitsTelegramPostLimit` in `@postdash/shared/telegram-format`). When
+// VK/Discord adapters arrive in Phase 9/13, each enforces its own platform
+// limit. Keeping the generic AI contract free of Telegram constants preserves
+// "Telegram is an adapter, not core".
 export const DraftOutputSchema = z.object({
   title: z.string().optional(),
-  post_text: z.string().min(1).max(4096),
+  post_text: z.string().min(1),
   source_links: z.array(z.string().url()).min(1),
   notes: z.string().optional(),
   risk_flags: z.array(z.string()),

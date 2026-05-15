@@ -1,13 +1,7 @@
 import type { Pool } from '@postdash/db';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
-
-const apiEnv = {
-  NODE_ENV: 'test' as const,
-  LOG_LEVEL: 'silent' as const,
-  API_HOST: '0.0.0.0',
-  API_PORT: 0,
-};
+import { testEnv as apiEnv } from './helpers/test-env.js';
 
 function makeMockPool(pingImpl: () => Promise<void>): Pool {
   return {
@@ -42,9 +36,9 @@ describe('GET /ready', () => {
     expect(typeof body['time']).toBe('string');
   });
 
-  it('returns 503 with error message when pool ping throws', async () => {
+  it('returns 503 with a static code/message — never the raw driver error', async () => {
     const pool = makeMockPool(async () => {
-      throw new Error('connection refused');
+      throw new Error('connection refused to db.internal.example:5432');
     });
     const app = await buildApp(apiEnv, { pool });
     teardown = () => app.close();
@@ -55,7 +49,11 @@ describe('GET /ready', () => {
     const body = res.json() as Record<string, unknown>;
     expect(body['status']).toBe('not_ready');
     expect(body['db']).toBe('unreachable');
-    expect(body['error']).toContain('connection refused');
+    expect(body['code']).toBe('db_ping_failed');
+    expect(body['message']).toBe('database ping failed');
+    // The raw driver error string must not leak to the client.
+    expect(JSON.stringify(body)).not.toContain('connection refused');
+    expect(JSON.stringify(body)).not.toContain('db.internal.example');
   });
 
   it('is not registered when no pool is provided', async () => {

@@ -16,6 +16,16 @@ export interface Pool {
 
 export type Database = Pool['db'];
 
+/**
+ * Type of `tx` inside `db.transaction(async (tx) => ...)`. Used by code that
+ * runs partly inside and partly outside a transaction (e.g. idempotent
+ * commands). Both Database and DbTx expose the same query API.
+ */
+export type DbTx = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+/** Either a top-level Database handle or a transaction handle. */
+export type DbOrTx = Database | DbTx;
+
 export interface PoolOptions {
   max?: number;
   idleTimeoutSec?: number;

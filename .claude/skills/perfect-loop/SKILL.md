@@ -177,9 +177,12 @@ Customize разрешён только если пользователь явн
 3. Проверить roster, при необходимости предложить новых субагентов
 4. Создать <run_dir>, сохранить config.json
 5. for main_loop in 1..max_main_loops:
-     fresh_agents = spawn fresh Agent() instances
+     fresh_agents = spawn fresh Agent() instances     # см. Tooling §
      for sub_loop in 1..max_sub_loops:
-       parallel: core reviewers + applicable specialists
+       if sub_loop == 1:
+         parallel: Agent() calls for core + specialists  # fresh agents
+       else:
+         parallel: SendMessage(to=agent_id) calls        # SAME agents, +diff
        Tier3: synthesizer + goal-keeper
        check stop conditions
        if not stopped:
@@ -188,3 +191,53 @@ Customize разрешён только если пользователь явн
      write main-N/SUMMARY.md
 6. Write REPORT.md with FINAL STATUS
 ```
+
+## Orchestrator tooling: `Agent()` vs `SendMessage` (NON-NEGOTIABLE)
+
+Критическое различие. Игнорирование = некорректная семантика стоп-правил.
+
+**main_loop boundary** (переход main_loop N → N+1) = новый `Agent(subagent_type=…)` для каждой роли.
+- Свежий контекст: агент НЕ помнит предыдущих критик.
+- Нужно для **PERFECT_FRESH** (STOP §2): `score == 10` на `sub_loop == 1` в `main_loop ≥ 2` С СВЕЖИМИ агентами — это единственный естественный stop.
+- Цена: prompt cache miss, полный role+anchors prompt пересылается заново.
+
+**sub_loop iteration внутри одного main_loop** (sub_loop M → M+1) = `SendMessage(to=<agentId>, prompt=…)` к тому же агенту.
+- Тот же ревьюер видит свой собственный progress между sub_loops (как изменился артефакт после implementer'а).
+- agentId возвращается в первом `Agent()` ответе — ищи `agentId: <id>` в output'е, сохрани в state перед началом sub_loop 2.
+- Дешевле: prompt cache hit, передаётся только delta (применённые fix'ы + diff).
+
+### Конкретный pattern
+
+```
+# main_loop 1, sub_loop 1
+arch_id  = Agent(subagent_type="pl-architect", prompt=ARTIFACT + ANCHORS)
+break_id = Agent(subagent_type="pl-breaker",   prompt=ARTIFACT + ANCHORS)
+goal_id  = Agent(subagent_type="pl-goal-keeper", prompt=ARTIFACT + GOAL)
+synth_id = Agent(subagent_type="pl-synthesizer", prompt=...)
+→ scores → synth → if score<10: implementer + fix-reviewer
+
+# main_loop 1, sub_loop 2 (ТЕ ЖЕ агенты через SendMessage)
+SendMessage(to=arch_id,  prompt="Implementer applied: <list>. Re-score.")
+SendMessage(to=break_id, prompt="Implementer applied: <list>. Re-attack.")
+SendMessage(to=goal_id,  prompt="Implementer applied: <list>. Re-check drift.")
+→ scores → synth (через SendMessage to synth_id) → if score<10: implementer
+
+# main_loop 1, sub_loop 3..5: продолжаем через SendMessage к тем же id
+
+# main_loop 2, sub_loop 1 (СВЕЖИЕ Agent() — старые id отбрасываем)
+arch_id  = Agent(subagent_type="pl-architect", prompt=CURRENT_ARTIFACT + ANCHORS)
+break_id = Agent(subagent_type="pl-breaker",   prompt=CURRENT_ARTIFACT + ANCHORS)
+...
+→ если MIN(scores) == 10 ⇒ PERFECT_FRESH ⇒ STOP
+```
+
+### Anti-pattern
+
+Запускать `Agent()` подряд для каждой итерации = делать N main_loops с одним sub_loop каждый.
+- Технически работает (PERFECT_FRESH достигается на N-м `Agent()` round'е), но:
+  - prompt cache miss на каждом round (дорого);
+  - ревьюер не видит свой собственный progress (теряется специфичный сигнал "я в прошлый раз требовал X, теперь X сделан, остаётся Y");
+  - SUMMARY.md содержит "main_loop=N, sub_loop=1" вместо реалистичной траектории;
+  - стоп-rule "delta < 0.5 два sub_loop'а подряд" (STOP §4) не сработает потому что каждый round — это новый main_loop, dеlta не tracked внутри одного main.
+
+State каждого main_loop ДОЛЖЕН хранить `{role: agentId}` map чтобы sub_loops через SendMessage были к ТЕМ ЖЕ агентам. На переходе к следующему main_loop этот map очищается.

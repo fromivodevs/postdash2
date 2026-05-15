@@ -18,6 +18,39 @@ Acceptance: каждый чекпоинт включает edge cases из `12-E
 - Единственный чек-лист с чек-боксами — секция "Roadmap progress" в конце этого документа. Один `[x]` = одна завершённая фаза.
 - Когда ставишь `- [x] Phase N`, хук `stage-complete-detector` детектит ключевое слово "Phase N" и предлагает: запусти `/step-perfect-loop with full 5x5 depth` — фаза валидируется через lean core + `pl-plan-keeper` (проверка соответствия обещанию плана) + git diff всей фазы.
 
+## Phase branches and commit boundaries
+
+This repository keeps phases recoverable as cumulative branches.
+
+- Branch naming:
+  - `phase/base` - baseline before Phase 0 implementation, when available.
+  - `phase/0-foundation` - Phase 0 only.
+  - `phase/1-identity` - Phase 0 plus Phase 1.
+  - `phase/N-<slug>` - all phases `0..N`, and no later phase.
+- Phase-only diff rule:
+  - Phase 0 artifact: `git diff phase/base..phase/0-foundation`.
+  - Phase N artifact: `git diff phase/(N-1)-<slug>..phase/N-<slug>`.
+  - `step-perfect-loop` must validate only this phase-only diff, not a mixed `main` diff.
+- Commit boundary rule:
+  - Every phase commit subject starts with one of:
+    - `[phase N]`
+    - `[phase N fix]`
+    - `[phase N loop]`
+    - `[phase N docs]`
+  - On closure, add immutable tags:
+    - `phase-N-start` at the previous phase branch head.
+    - `phase-N-perfect` at the validated phase branch head.
+    - If a later correction changes the branch, add `phase-N-perfect-r2`, `phase-N-perfect-r3`, etc.; do not move old tags.
+- Rollback and old-phase validation:
+  - To inspect or validate Phase K after later work exists, checkout `phase/K-<slug>` first.
+  - Run `/step-perfect-loop with full 5x5 depth` against the Phase K diff only.
+  - Never run a Phase K loop from a branch that already contains Phase `K+1` unless the artifact is explicitly limited to the branch diff above.
+- Forward propagation rule:
+  - If Phase K receives a fix after Phase 5 already exists, commit the fix on `phase/K-<slug>` first.
+  - Then propagate the same logical fix forward into every cumulative branch that includes Phase K: `phase/(K+1)-<slug>`, `phase/(K+2)-<slug>`, ..., current phase branch, and `main`.
+  - Do not propagate the fix backward into branches for phases `< K`.
+  - After propagation, rerun the Phase K loop on `phase/K-<slug>`. Rerun later phase checks only if propagation produced conflicts or changed that later phase's own branch diff.
+
 ## Phase 0 — Project foundation + AI scaffolding
 
 ### Goal
@@ -466,6 +499,9 @@ MVP готов для 10–30 early users.
 Перед каждым commit'ом фазы:
 - все tasks из секции "Tasks" завершены;
 - все tests из секции "Tests" зелёные;
+- commit subject uses the phase prefix: `[phase N]`, `[phase N fix]`, `[phase N loop]`, or `[phase N docs]`;
+- changes are committed on the matching cumulative branch `phase/N-<slug>`;
+- phase-only diff is cleanly defined by `phase/(N-1)-<slug>..phase/N-<slug>` (or `phase/base..phase/0-foundation` for Phase 0);
 - edge cases из `12-EDGE-CASES.md §15` для этой фазы покрыты;
 - для phase'ов с UI: design-review checklist `13-MINIAPP-DESIGN-SYSTEM.md §15` пройден (dark/light, 3 платформы, slow 4G, a11y, bundle delta);
 - `PROJECT_MAP.md` обновлён (новые files и systems);
@@ -490,7 +526,7 @@ MVP готов для 10–30 early users.
 Единственный чек-лист с `- [x]` во всём проекте. Когда фаза закрыта (commit + tests + acceptance checklist), ставь `- [x]` рядом с ней — хук подскажет запустить `/step-perfect-loop` с full 5×5 depth для phase-level validation.
 
 - [x] Phase 0 — Project foundation + AI scaffolding
-- [ ] Phase 1 — Identity, workspace, Telegram Mini App auth
+- [x] Phase 1 — Identity, workspace, Telegram Mini App auth
 - [ ] Phase 2 — Channel connection
 - [ ] Phase 3 — Topics and sources
 - [ ] Phase 4 — Task system, global ingestion, embeddings

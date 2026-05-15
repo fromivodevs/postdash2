@@ -10,6 +10,11 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@postdash/db": "workspace:*",
+    "@postdash/domain": "workspace:*",
+    "drizzle-orm": "^0.38.4"
+  },
   "devDependencies": {
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"

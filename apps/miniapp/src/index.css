@@ -1,10 +1,12 @@
+@import './theme/tokens.css';
+
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  font-family: var(--tgui--font_family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   font-size: 15px;
   line-height: 1.5;
   color-scheme: light dark;
-  background: var(--tg-theme-bg-color, #ffffff);
-  color: var(--tg-theme-text-color, #1f1f1f);
+  background: var(--tg-theme-bg-color, var(--color-surface-fallback));
+  color: var(--tg-theme-text-color, var(--color-text-fallback));
 }
 
 * {
@@ -17,26 +19,196 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.root {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 24px 16px;
-}
-
-h1 {
-  font-size: 22px;
-  font-weight: 600;
-  margin: 0 0 12px;
-}
-
-p {
-  margin: 0 0 12px;
-}
-
 a {
-  color: var(--tg-theme-link-color, #2481cc);
+  color: var(--tg-theme-link-color, var(--color-link-fallback));
 }
 
 .muted {
-  color: var(--tg-theme-hint-color, #707579);
+  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+}
+
+/*
+ * App shell — leaves room at the bottom for the Tabbar so the last Cell of a
+ * scrollable Section is never hidden behind it.
+ */
+.app-shell {
+  min-height: 100vh;
+  padding-bottom: calc(var(--space-10) + var(--space-6));
+}
+
+.app-shell--no-tabbar {
+  padding-bottom: 0;
+}
+
+/*
+ * Boot-time aria-live region (§8): always mounted so a screen reader announces
+ * the slow-network banner when it appears. `display: contents` keeps the empty
+ * wrapper from adding a stray flex gap inside .screen-center.
+ */
+.boot-live-region {
+  display: contents;
+}
+
+/* Full-screen centered container — boot spinner, ErrorState, no-telegram. */
+.screen-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 100vh;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+/* Bottom Tabbar pinned to the viewport edge. */
+.app-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+}
+
+/* One-at-a-time toast host (§7 rate-limit). */
+.snackbar-host {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.snackbar-host > * {
+  pointer-events: auto;
+}
+
+/*
+ * Tone accent (§7): success/danger toasts must be visually distinct from a
+ * neutral confirmation. A left accent border keeps the native telegram-ui
+ * <Snackbar> look while making the tone obvious. Neutral keeps no accent.
+ */
+.snackbar--success {
+  border-left: var(--space-1) solid var(--color-success);
+}
+
+.snackbar--danger {
+  border-left: var(--space-1) solid var(--color-danger);
+}
+
+/* Field error (§7 field-error tier). */
+.field-error {
+  margin: var(--space-1) 0 0;
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+/* Confirm modal (§7 modal tier) — native <dialog>, tokens only. */
+.confirm-modal {
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: 0;
+  max-width: 340px;
+  width: calc(100vw - var(--space-8));
+  background: var(--tg-theme-bg-color, var(--color-surface-fallback));
+  color: var(--tg-theme-text-color, var(--color-text-fallback));
+}
+
+.confirm-modal::backdrop {
+  background: var(--color-backdrop);
+}
+
+.confirm-modal__body {
+  padding: var(--space-5);
+}
+
+.confirm-modal__title {
+  margin: 0 0 var(--space-2);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.confirm-modal__description {
+  margin: 0 0 var(--space-4);
+  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+}
+
+.confirm-modal__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+/*
+ * Action buttons are telegram-ui <Button>s; this only makes the two share the
+ * actions row evenly. Visual styling (height, radius, fill) comes from
+ * telegram-ui so the modal matches the rest of the app on iOS.
+ */
+.confirm-modal__btn {
+  flex: 1;
+}
+
+/* Destructive confirm — override the filled Button fill with the danger token. */
+.confirm-modal__btn--danger {
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+/*
+ * Skeleton loading block (§6 skeleton-first). Token-only: the base tint is the
+ * secondary surface, the shimmer sweeps a hint-colored highlight across it.
+ * The shimmer is disabled by the global prefers-reduced-motion rule in
+ * tokens.css (§11).
+ */
+.skeleton {
+  display: block;
+  background: var(--tg-theme-secondary-bg-color, var(--color-surface-secondary-fallback));
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--tg-theme-hint-color, var(--color-hint-fallback)) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  opacity: 0.5;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -150% 0;
+  }
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+/* Wizard progress dots (§9). */
+.wizard-dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+}
+
+.wizard-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+  background: var(--tg-theme-hint-color, var(--color-hint-fallback));
+  opacity: 0.35;
+}
+
+.wizard-dot--active {
+  opacity: 1;
+  background: var(--tg-theme-button-color, var(--color-link-fallback));
 }

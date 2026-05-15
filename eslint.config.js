@@ -32,4 +32,12 @@ export default tseslint.config(
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
+  {
+    // Plain Node build/CI scripts (not TypeScript, so typescript-eslint does
+    // not relax `no-undef` for them). Declare the Node globals they rely on.
+    files: ['**/scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly' },
+    },
+  },
 );

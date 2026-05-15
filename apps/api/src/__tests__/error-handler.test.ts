@@ -1,13 +1,7 @@
 import { AIProviderError, type AIProviderErrorCode } from '@postdash/ai';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
-
-const apiEnv = {
-  NODE_ENV: 'test' as const,
-  LOG_LEVEL: 'silent' as const,
-  API_HOST: '0.0.0.0',
-  API_PORT: 0,
-};
+import { testEnv as apiEnv } from './helpers/test-env.js';
 
 async function appThrowing(code: AIProviderErrorCode) {
   const app = await buildApp(apiEnv, {});

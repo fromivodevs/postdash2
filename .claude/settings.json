@@ -48,6 +48,16 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File C:/PostDash/.claude/hooks/subagent-roadmap-reminder.ps1"
+          }
+        ]
+      }
     ]
   },
   "permissions": {

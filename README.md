@@ -96,6 +96,22 @@ Roadmap: `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md`.
 
 Acceptance criteria phase'ы — в roadmap. Запуск `/step-perfect-loop with full 5x5 depth` после `- [x] Phase N` валидирует целую фазу против обещаний плана.
 
+Phase branches are cumulative and are the source of truth for rollback and
+phase-only validation: `phase/0-foundation` contains only Phase 0,
+`phase/1-identity` contains Phase 0 plus Phase 1, and so on. Run
+`step-perfect-loop` from the matching phase branch and compare only
+`phase/(N-1)-<slug>..phase/N-<slug>`; for Phase 0 use
+`phase/base..phase/0-foundation`.
+
+## Operational notes
+
+- **Bot rate limiter is single-process.** `apps/api/src/bot/rate-limit.ts` keeps
+  per-user message counters in-memory. It is correct only with exactly one bot
+  process running; scaling the bot out horizontally multiplies the effective
+  limit (each process counts independently). Shared counters
+  (Postgres/Redis) are a Phase 8+ change — do not scale the bot process out
+  before then.
+
 ## Conventions
 
 См. `CLAUDE.md` (encoding rules, AI = adapter, idempotency, cost guard) и `tg_mvp_plan/09-CODEX-CLAUDE-INSTRUCTIONS.md` (правила реализации для кодинг-агентов).
