@@ -77,7 +77,11 @@ export interface ChannelsRouteDeps {
 }
 
 const ConnectBodySchema = z.object({
-  code: z.string().min(1).max(64),
+  // Mirror command-layer cap (6..20). 8 chars is what generator produces today;
+  // the 6..20 envelope leaves room for future format changes. Keeping route and
+  // command caps identical surfaces an out-of-range code as a uniform 400 here
+  // rather than passing this layer and tripping a generic CommandError downstream.
+  code: z.string().min(6).max(20),
   // Align with the command layer's cap (see `@postdash/domain` channel.ts).
   // Keeping these in sync ensures an oversize input surfaces as a uniform
   // 400 here rather than passing this layer and tripping the command's Zod
