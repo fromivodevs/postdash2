@@ -32,6 +32,20 @@
   - `src/__tests__/ready.test.ts` — 3 tests (pool ping, 503 on fail)
   - `src/__tests__/error-handler.test.ts` — 9 tests (AI error code → HTTP mapping)
   - `src/__tests__/env.test.ts` — 12 tests (env validation edge cases)
+  - `src/routes/channels.ts` — `POST /channels`, `GET /channels/:id/connect-code`
+  - `src/routes/channels-projection.ts` — `GET /channels/:id` (projection)
+  - `src/routes/auth-telegram.ts` — Telegram auth endpoint
+  - `src/routes/me.ts` — `GET /me`
+  - `src/routes/projection.ts` — shared projection helpers
+  - `src/routes/error-mapping.ts` — Phase 2 `CHANNEL_DETAILS_TABLE` (expired_code / reused_code / channel_taken / bot_not_admin / missing_post_permission / chat_not_found / bot_blocked / unauthorized / cross_workspace_replay)
+  - `src/bot/bot.ts` — start-payload routing to `handleStartConnect`
+  - `src/bot/handlers/start-connect.ts` — `/start connect_<code>` flow
+  - `src/bot/__tests__/parse-start-payload.test.ts` — 7 tests
+  - `src/__tests__/routes-auth.test.ts` — auth route tests
+  - `src/__tests__/routes-webhook.test.ts` — webhook route tests
+  - `src/__tests__/telegram-webhook-hardening.test.ts` — webhook hardening tests
+  - `src/__tests__/helpers/` — shared test helpers
+  - Total API tests: 82
 - `apps/miniapp/` — Vite + React 18 + Telegram SDK Mini App
   - `vite.config.ts`, `index.html`
   - `src/main.tsx` — provider tree (Query / AppRoot / Router / Snackbar / Session)
@@ -42,8 +56,16 @@
   - `src/telegram/` — WebApp boot, theme listener, AppRoot, BackButton/MainButton hooks
   - `src/routing/` — route table + Telegram `start_param` deep-link mapping (§10)
   - `src/components/` — baseline palette + §7 error taxonomy (Snackbar/Banner/Modal/FieldError/ErrorState)
+  - `src/components/CopyButton.tsx` — copy-to-clipboard with visual feedback
   - `src/screens/` — 5 tab placeholders + `onboarding/` 3-step wizard skeleton (§9)
+  - `src/screens/ChannelScreen.tsx` — Phase 2 full implementation: 4-state (loading/error/no-code/has-code)
+  - `src/screens/channelView.ts` — pure selector for ChannelScreen state
+  - `src/api/channels.ts` — channels API client (fetch connect code, channel details)
+  - `src/session/` — session context
+  - `src/telegram/` — WebApp boot, theme listener, AppRoot, BackButton/MainButton hooks
+  - `src/routing/` — route table + Telegram `start_param` deep-link mapping (§10)
   - `scripts/check-bundle-size.mjs` — gzip bundle budget gate (§5/§13), `.bundle-size-baseline.json`
+  - Total miniapp tests: 104 (incl. ChannelScreen 23, channels api 15)
 - `apps/worker/` — task polling, IAM refresh, AI calls (Phase 4+)
   - `src/index.ts` — entry, pino logger
   - `src/loop.ts` — `WorkerLoop` class (Phase 0: no-op tick)
@@ -68,15 +90,40 @@
   - `src/env.ts` — `DATABASE_URL` validation (friendly ZodError wrapper)
   - `src/__tests__/migrate.test.ts` — 6 tests (concurrency, checksum reject, drift filename, drift wildcard, programmatic boolean, no-op warn; skipped via `SKIP_DB_TESTS=1`)
   - `migrations/0000_init.sql` — `CREATE EXTENSION vector`
+  - `migrations/0001_phase1.sql` / `0001_phase1.down.sql` — Phase 1 tables
+  - `migrations/0002_phase2.sql` / `0002_phase2.down.sql` — Phase 2: `content_channels`, `channel_connections`, `channel_connect_codes`
 - `packages/shared/` — общий код между backend и Mini App
   - `src/telegram-format.ts` — `TELEGRAM_POST_MAX_LENGTH = 4096` constant + `fitsTelegramPostLimit(text)` helper; Phase 6: full parser
-  - `src/index.ts` — re-exports `TELEGRAM_POST_MAX_LENGTH`, `fitsTelegramPostLimit`
+  - `src/channel-projection.ts` — Phase 2: wire types (`ChannelProjection`, `ConnectCodeProjection`) + `buildConnectDeepLink`
+  - `src/index.ts` — re-exports `TELEGRAM_POST_MAX_LENGTH`, `fitsTelegramPostLimit`, channel-projection
   - `src/__tests__/telegram-format.test.ts` — 4 tests for `fitsTelegramPostLimit`
+  - `src/__tests__/` — 33 tests total (incl. channel-projection 11)
 - `packages/channel-adapters/` — Telegram (Phase 2+) / VK / Discord (future)
   - `README.md` — architectural rule: channel-agnostic core; adapter scope documented
+  - `src/telegram/types.ts` — Telegram adapter types
+  - `src/telegram/errors.ts` — adapter-specific errors
+  - `src/telegram/api-client.ts` — Telegram Bot API client wrapper
+  - `src/telegram/verify-connection.ts` — bot admin + post-permission verification
+  - `src/telegram/index.ts` — `TelegramChannelAdapter` export
+  - Tests: 33 cases
 - `packages/commands/` — command handlers + idempotency (Phase 1+)
+  - `src/index.ts` — re-exports all commands
+  - `src/errors.ts` — `CommandError` + `details?: Record<string,string>` (Phase 2 extended)
+  - `src/idempotency.ts` — idempotency key helpers
+  - `src/authenticate-telegram.ts` — Telegram auth command
+  - `src/read-current-user.ts` — read user command
+  - `src/mark-bot-blocked.ts` — mark bot blocked command
+  - `src/row-mappers.ts` — DB row → domain mappers
+  - `src/create-connect-code.ts` — Phase 2: generate channel connect code
+  - `src/connect-telegram-channel.ts` — Phase 2: bind Telegram chat to workspace
+  - `src/connect-code-helpers.ts` — Phase 2: connect code utilities
+  - `src/policies.ts` — Phase 2: command-level policy checks
+  - `src/__tests__/` — 36 tests total
 - `packages/policies/` — auth, role, integrity checks (Phase 1+)
 - `packages/domain/` — pure business types (Phase 1+)
+  - `src/identity.ts` — identity types
+  - `src/channel.ts` — Phase 2: `ContentChannel`, `ChannelConnection`, `ChannelConnectCode` pure types + `narrow*` helpers + `MAX_EXTERNAL_CHAT_ID_LEN`
+  - `src/index.ts` — re-exports all domain types
 - `packages/sources/` — RSS fetchers + URL canonicalization (Phase 3+)
 
 ### Plan
@@ -91,20 +138,11 @@
 
 См. `ARCHITECTURE.md`.
 
-- `architecture/channel-connection.md` — Phase 2 channel-connection system. *In design.* Planned files (not yet implemented):
-  - `packages/db/migrations/0002_phase2.sql` + `.down.sql`
-  - `packages/db/src/schema.ts` (additions: `contentChannels`, `channelConnections`, `channelConnectCodes`)
-  - `packages/domain/src/channel.ts`
-  - `packages/commands/src/{create-connect-code,connect-telegram-channel,connect-code-helpers,policies}.ts`
-  - `packages/channel-adapters/src/telegram/{index,types,errors,api-client,verify-connection}.ts`
-  - `apps/api/src/routes/{channels,channels-projection}.ts`
-  - `apps/api/src/bot/handlers/start-connect.ts`
-  - `apps/miniapp/src/screens/ChannelScreen.tsx` (rewrite of Phase 1 placeholder)
-  - `apps/miniapp/src/api/channels.ts`
-  - `apps/miniapp/src/components/CopyButton.tsx`
-  - `packages/shared/src/channel-projection.ts`
+- `architecture/channel-connection.md` — Phase 2 channel-connection system. *Active.* 3 DB tables, 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (33 tests), 4-state Mini App screen. Closed tag: `phase-2-perfect`.
 
 ## Recent changes (last 10)
+
+- 2026-05-15: Phase 2 (Channel Connection) closed and tagged `phase-2-perfect`. 3 DB tables (`content_channels`, `channel_connections`, `channel_connect_codes`), 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (`packages/channel-adapters/src/telegram/`), 4-state Mini App `ChannelScreen`, `buildConnectDeepLink` in shared. Total workspace: 306 tests.
 
 - 2026-05-15: Centralized project-specific agent rules in `PROJECT_RULES.md`; `AGENTS.md` and `CLAUDE.md` now act as runtime shims. Kit now includes generic `PROJECT_RULES.md` templates, install guidance, diagnose drift checks, and final handoff guidance for loop commands.
 

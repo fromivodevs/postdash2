@@ -13,7 +13,7 @@
 
 ## Active systems
 
-- [channel-connection](architecture/channel-connection.md) — Telegram channel binding to workspace (Phase 2): connect codes, bot post-permission verification, deep-link `/start connect_<code>` flow. *Status: In design.*
+- [channel-connection](architecture/channel-connection.md) — Telegram channel binding to workspace (Phase 2): connect codes, bot post-permission verification, deep-link `/start connect_<code>` flow. *Status: Active. Closed: phase-2-perfect.*
 
 ## Deprecated systems
 
