@@ -52,9 +52,12 @@ export function makeFakePool(script: FakeDbScript = {}): FakePool {
       'set',
       'values',
       'onConflictDoNothing',
+      'onConflictDoUpdate',
       'innerJoin',
+      'leftJoin',
       'orderBy',
       'limit',
+      'for',
     ];
     for (const m of passthrough) proxy[m] = () => proxy;
     proxy['returning'] = async () => resolveRows();

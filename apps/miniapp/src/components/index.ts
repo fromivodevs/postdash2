@@ -8,6 +8,7 @@
 
 export { Section, Cell, List, Spinner, Placeholder, Button, Banner } from './layout.ts';
 export { Skeleton } from './Skeleton.tsx';
+export { CopyButton, copyToClipboard } from './CopyButton.tsx';
 
 export { SnackbarProvider, useSnackbar } from './feedback/SnackbarProvider.tsx';
 export { InlineBanner } from './feedback/InlineBanner.tsx';

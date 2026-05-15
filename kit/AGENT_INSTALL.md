@@ -22,7 +22,7 @@ Install the reusable agent setup into any project:
 - `.codex/hooks/*` when Codex target is selected
 - `.codex/kit/*` when Codex target is selected
 - root `AGENTS.md` when Codex target is selected
-- project templates: `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`, `.gitattributes`
+- project templates: `PROJECT_RULES.md`, `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`, `.gitattributes`
 - merged `.claude/settings.json`
 - optional `CLAUDE.md` addition
 
@@ -154,6 +154,7 @@ Parallelization requirement:
 
 Create only if missing:
 
+- `PROJECT_RULES.md` from `kit/components/templates/PROJECT_RULES.md`
 - `PROJECT_MAP.md` from `kit/components/templates/PROJECT_MAP.md`
 - `ARCHITECTURE.md` from `kit/components/templates/ARCHITECTURE.md`
 - `architecture/_TEMPLATE.md` from `kit/components/templates/architecture-system-template.md`

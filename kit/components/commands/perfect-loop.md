@@ -9,3 +9,5 @@ Behavior:
 - Run domain specialists only when there is an explicit domain signal.
 - Do not copy `.claude/perfect-loop-runs/` into the portable source files.
 - Store only useful reports and final artifacts.
+- Final response must include a short next-session handoff and suggest `/clear`
+  or restarting the session before the next major step.

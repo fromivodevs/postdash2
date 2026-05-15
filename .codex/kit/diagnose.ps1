@@ -42,6 +42,7 @@ function Add-Command-Check {
         $output = & $Command 2>&1
         $exitCode = $LASTEXITCODE
         $text = ($output | Out-String).Trim()
+        $text = $text -replace '(?m)^warning:.*LF will be replaced by CRLF.*(\r?\n)?', ''
         if ($exitCode -ne 0) {
             $script:results += Add-Result $Name 'FAIL' ("exit code ${exitCode}: $text")
         } elseif ($text -match '(?i)\b(warning|error|failed|fatal|parsererror|exception)\b') {
@@ -281,6 +282,80 @@ foreach ($dir in $requiredDirs) {
 
 Test-Skill-Frontmatter (Join-Path $codexDir 'skills') 'codex skills'
 
+$projectRulesPath = Join-Path $projectRoot 'PROJECT_RULES.md'
+if (Test-Path $projectRulesPath) {
+    $results += Add-Result 'PROJECT_RULES.md' 'OK' 'present'
+} else {
+    $results += Add-Result 'PROJECT_RULES.md' 'FAIL' 'missing shared project rules file'
+}
+
+$projectRulesTemplates = @(
+    '.claude/kit/templates/PROJECT_RULES.md',
+    '.codex/kit/templates/PROJECT_RULES.md',
+    'kit/components/templates/PROJECT_RULES.md',
+    'kit/components/codex/templates/PROJECT_RULES.md'
+)
+foreach ($template in $projectRulesTemplates) {
+    $templatePath = Join-Path $projectRoot $template
+    if (Test-Path $templatePath) {
+        $results += Add-Result $template 'OK' 'present'
+    } else {
+        $results += Add-Result $template 'FAIL' 'missing PROJECT_RULES template'
+    }
+}
+
+$templatePairs = @(
+    @('.claude/kit/templates/PROJECT_RULES.md', 'kit/components/templates/PROJECT_RULES.md'),
+    @('.codex/kit/templates/PROJECT_RULES.md', 'kit/components/codex/templates/PROJECT_RULES.md')
+)
+foreach ($pair in $templatePairs) {
+    $left = Join-Path $projectRoot $pair[0]
+    $right = Join-Path $projectRoot $pair[1]
+    if ((Test-Path $left) -and (Test-Path $right)) {
+        $leftText = Get-Content -LiteralPath $left -Raw -Encoding UTF8
+        $rightText = Get-Content -LiteralPath $right -Raw -Encoding UTF8
+        if ($leftText -eq $rightText) {
+            $results += Add-Result "template sync: $($pair[0])" 'OK' 'matches source template'
+        } else {
+            $results += Add-Result "template sync: $($pair[0])" 'FAIL' "does not match $($pair[1])"
+        }
+    }
+}
+
+$bannedProjectTerms = @(
+    ('Post' + 'Dash'),
+    ('Neon' + ' Postgres'),
+    ('phase/' + '0-foundation'),
+    ('phase/' + '1-identity'),
+    ('phase/' + '2-channel-connection'),
+    ('phase-' + '1-identity'),
+    ('phase-' + '2-channel-connection')
+)
+$portableRoots = @(
+    (Join-Path $projectRoot '.claude\kit'),
+    (Join-Path $projectRoot '.codex\kit'),
+    (Join-Path $projectRoot 'kit\components')
+)
+foreach ($root in $portableRoots) {
+    if (-not (Test-Path $root)) { continue }
+    $badHits = @()
+    Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.md','*.ps1','*.json','*.yml','*.yaml' | ForEach-Object {
+        if ($_.Name -eq 'diagnose.ps1') { return }
+        $text = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        foreach ($term in $bannedProjectTerms) {
+            if ($text -like "*$term*") {
+                $badHits += ($_.FullName.Substring($projectRoot.Length).TrimStart('\') + " contains $term")
+                break
+            }
+        }
+    }
+    if ($badHits.Count -gt 0) {
+        $results += Add-Result 'portable kit project-specific terms' 'FAIL' ($badHits -join '; ')
+    } else {
+        $results += Add-Result 'portable kit project-specific terms' 'OK' 'no banned project-specific terms'
+    }
+}
+
 $kitDir = Join-Path $projectRoot 'kit'
 if (Test-Path $kitDir) {
     $jsonFiles = @(Get-ChildItem -LiteralPath $kitDir -Recurse -File -Filter '*.json')
@@ -297,7 +372,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
     $gitDirOutput = & git -C $projectRoot rev-parse --is-inside-work-tree 2>&1
     if ($LASTEXITCODE -eq 0 -and (($gitDirOutput | Out-String).Trim()) -eq 'true') {
         Add-Command-Check 'git diff --check' {
-            git -C $projectRoot diff --check -- .claude .codex kit AGENTS.md CLAUDE.md
+            git -c core.autocrlf=false -C $projectRoot diff --check -- .claude .codex kit AGENTS.md CLAUDE.md PROJECT_RULES.md
         }
     }
 }

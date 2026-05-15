@@ -26,6 +26,11 @@ This is a standing project-level routing policy. If the runtime permits subagent
 
 Start non-trivial tasks with `work-router` unless the user named a specific skill or agent.
 
+## Project Rules
+
+Read `PROJECT_RULES.md` before non-trivial work. It is the shared source for
+project-specific policy. Keep `AGENTS.md` focused on Codex runtime mapping.
+
 ## Install Expectations
 
 The portable setup should create:
@@ -36,7 +41,7 @@ The portable setup should create:
 - `.codex/kit/*`
 - `.codex/kit/SUBAGENT_ROUTING.md`
 - root `AGENTS.md` with this runtime mapping section
-- project navigation files if missing: `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`
+- project rule/navigation files if missing: `PROJECT_RULES.md`, `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`
 
 For Claude Code compatibility, `.claude/*` may also be installed in the same project.
 

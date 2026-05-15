@@ -45,6 +45,67 @@ export function sanitizeCommandError(err: CommandError): SanitizedCommandError {
 }
 
 /**
+ * Phase 2 extension: per `details.code` overrides for `connectTelegramChannel`.
+ *
+ * The command layer attaches a wire-level discriminator on `CommandError.details.code`
+ * (e.g. `'expired_code'`, `'channel_taken'`, `'bot_not_admin'`) — see architecture
+ * doc Decision: "CommandError grows optional details". The route layer uses
+ * this table to pick a non-default HTTP status for these specific codes:
+ *   - `expired_code` -> 410 Gone (resource ceased to exist)
+ *   - `reused_code` / `channel_taken` -> 409 Conflict
+ *   - `bot_not_admin` / `missing_post_permission` / `chat_not_found` /
+ *     `bot_blocked` / `unauthorized` -> 400 (user-fixable Telegram-side state)
+ *
+ * The message is intentionally generic; the wire `code` is the stable contract
+ * the Mini App keys its copy on. `null` value means "use the default
+ * `sanitizeCommandError` mapping" — used as the fallback when `details.code`
+ * is absent or unrecognized.
+ */
+const CHANNEL_DETAILS_TABLE: Record<string, SanitizedCommandError | null> = {
+  expired_code: { status: 410, message: 'connect code expired; create a new one' },
+  reused_code: { status: 409, message: 'connect code already used' },
+  channel_taken: {
+    status: 409,
+    message: 'channel is already connected to another workspace',
+  },
+  bot_not_admin: { status: 400, message: 'bot is not an admin in the channel' },
+  missing_post_permission: {
+    status: 400,
+    message: 'bot lacks permission to post in the channel',
+  },
+  chat_not_found: { status: 400, message: 'channel not found' },
+  bot_blocked: { status: 400, message: 'bot is blocked' },
+  unauthorized: { status: 400, message: 'bot is unauthorized for the channel' },
+};
+
+/**
+ * Sanitizes a CommandError that may carry a Phase 2 `details.code`. Falls back
+ * to the default `sanitizeCommandError` mapping when `details.code` is absent
+ * or not in the override table. Returns the (possibly extra) `detailsCode` so
+ * the route can echo it on the wire as `{ code: <detailsCode> }`.
+ */
+export interface SanitizedChannelError extends SanitizedCommandError {
+  /**
+   * Wire-level discriminator the route MUST echo as the response body `code`.
+   * Falls back to `err.code` (the CommandErrorCode) when no details.code is
+   * attached — same shape Phase 1 routes already produce.
+   */
+  wireCode: string;
+}
+
+export function sanitizeChannelCommandError(err: CommandError): SanitizedChannelError {
+  const detailsCode = err.details?.['code'];
+  if (detailsCode && CHANNEL_DETAILS_TABLE[detailsCode]) {
+    const override = CHANNEL_DETAILS_TABLE[detailsCode];
+    if (override) {
+      return { ...override, wireCode: detailsCode };
+    }
+  }
+  const base = sanitizeCommandError(err);
+  return { ...base, wireCode: detailsCode ?? err.code };
+}
+
+/**
  * TelegramInitDataError -> client-safe message mapping.
  *
  * `TelegramInitDataError.message` can carry diagnostic detail ("auth_date is

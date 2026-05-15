@@ -10,3 +10,4 @@
  */
 
 export * from './identity.js';
+export * from './channel.js';

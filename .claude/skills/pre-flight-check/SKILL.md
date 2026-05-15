@@ -1,6 +1,6 @@
 ---
 name: "pre-flight-check"
-description: "Перед non-trivial изменениями кода. Проверяет git статус, ветку, uncommitted, читает CLAUDE.md / PROJECT_MAP.md проекта. Триггеры — \"implement\", \"add feature\", \"rewrite\", \"refactor\", \"fix bug\"."
+description: "Перед non-trivial изменениями кода. Проверяет git статус, ветку, uncommitted, читает PROJECT_RULES.md / CLAUDE.md / PROJECT_MAP.md проекта. Триггеры — \"implement\", \"add feature\", \"rewrite\", \"refactor\", \"fix bug\"."
 trigger_patterns:
   - "implement"
   - "add feature"
@@ -21,8 +21,9 @@ trigger_patterns:
 3. **Uncommitted changes:**
    - Если есть и не относятся к текущей задаче — предложить `git stash push -m "wip before <task>"`
    - Если относятся — продолжать.
-4. **Читать CLAUDE.md** (если есть) — конвенции проекта.
-5. **Читать PROJECT_MAP.md / ARCHITECTURE.md** — где что лежит, не делать `Glob *` по всему проекту.
+4. **Читать PROJECT_RULES.md** (если есть) — единый источник проектных правил.
+5. **Читать CLAUDE.md / AGENTS.md** (если есть) — runtime-specific правила.
+6. **Читать PROJECT_MAP.md / ARCHITECTURE.md** — где что лежит, не делать `Glob *` по всему проекту.
 6. **Читать relevant `architecture/<system>.md`** для затрагиваемой системы.
 
 ## Output
@@ -32,7 +33,7 @@ trigger_patterns:
 ✓ Pre-flight check
   Branch: feat/news-pipeline (ok)
   Uncommitted: 2 files (related to task — keeping)
-  Conventions read: CLAUDE.md, PROJECT_MAP.md, architecture/news-pipeline.md
+  Conventions read: PROJECT_RULES.md, CLAUDE.md, PROJECT_MAP.md, architecture/news-pipeline.md
   Ready to start.
 ```
 

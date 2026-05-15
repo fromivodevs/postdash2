@@ -12,3 +12,6 @@ Inputs to collect:
 Use the step-default budget: 3 main loops x 3 sub-loops, MIN scoring, lean
 perfect-loop roster plus `pl-plan-keeper`. Domain specialists still require
 explicit triggers. Do not call this Quick/Default/Thorough.
+
+Final response must include a short next-session handoff and suggest `/clear`
+or restarting the session before the next step or phase.

@@ -58,6 +58,7 @@ Primary source of truth:
 9. Copy selected skills in parallel when safe.
 10. Copy all hooks, commands, templates, presets, root instructions, and support files.
 11. Create missing project templates:
+   - `PROJECT_RULES.md`
    - `PROJECT_MAP.md`
    - `ARCHITECTURE.md`
    - `architecture/_TEMPLATE.md`

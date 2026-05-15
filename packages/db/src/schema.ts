@@ -14,6 +14,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   index,
   jsonb,
@@ -181,6 +182,122 @@ export const operationLog = pgTable(
   ],
 );
 
+// =============================================================================
+// Phase 2: channel connection. See architecture/channel-connection.md.
+// Each table mirrors 0002_phase2.sql exactly — schema.ts <-> migration parity
+// is non-negotiable.
+// =============================================================================
+
+export const contentChannels = pgTable(
+  'content_channels',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    platform: text('platform').notNull(),
+    // external_id is text (not bigint): platform-uniform key for future
+    // adapters whose IDs are alphanumeric. Telegram int64 fits trivially.
+    externalId: text('external_id').notNull(),
+    type: text('type').notNull(),
+    title: text('title').notNull(),
+    username: text('username'),
+    photoUrl: text('photo_url'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('content_channels_platform_check', sql`${t.platform} IN ('telegram')`),
+    check(
+      'content_channels_type_check',
+      sql`${t.type} IN ('channel', 'supergroup', 'group', 'private_chat')`,
+    ),
+    unique('content_channels_platform_external_unique').on(t.platform, t.externalId),
+    index('content_channels_platform_idx').on(t.platform),
+  ],
+);
+
+export const channelConnections = pgTable(
+  'channel_connections',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    contentChannelId: uuid('content_channel_id')
+      .notNull()
+      .references(() => contentChannels.id, { onDelete: 'restrict' }),
+    status: text('status').notNull().default('pending'),
+    // null = "never verified" (pending); true/false after first verify call.
+    canPostMessages: boolean('can_post_messages'),
+    lastVerifyStatus: text('last_verify_status'),
+    lastVerifyError: text('last_verify_error'),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true, mode: 'date' }),
+    connectedAt: timestamp('connected_at', { withTimezone: true, mode: 'date' }),
+    connectedByUserId: uuid('connected_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'channel_connections_status_check',
+      sql`${t.status} IN ('pending', 'connected', 'broken', 'revoked')`,
+    ),
+    check(
+      'channel_connections_last_verify_status_check',
+      sql`${t.lastVerifyStatus} IS NULL OR ${t.lastVerifyStatus} IN (
+        'ok', 'bot_not_admin', 'missing_post_permission',
+        'chat_not_found', 'bot_blocked', 'network', 'unauthorized', 'unknown'
+      )`,
+    ),
+    // Phase 2: one workspace owns each content_channel. Phase 9 may relax to
+    // a partial-unique excluding 'revoked'. Enforces edge case 3.3 (channel
+    // taken by another workspace).
+    unique('channel_connections_content_channel_unique').on(t.contentChannelId),
+    index('channel_connections_workspace_idx').on(t.workspaceId, t.status),
+  ],
+);
+
+export const channelConnectCodes = pgTable(
+  'channel_connect_codes',
+  {
+    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    createdByUserId: uuid('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    // =========================================================================
+    // SECURITY — code_hash is sha256(plaintext_code) hex.
+    // =========================================================================
+    // Plaintext code is a short-lived bearer token (deep-link payload). At-rest
+    // storage of plaintext would turn backups/replicas/logs into "any active
+    // code is redeemable". sha256 + 40-bit code + TTL + single-use + connect-
+    // route rate-limit makes brute force infeasible. Plaintext code MUST
+    // NEVER appear in this column, operation_log.payload_summary, or
+    // command_idempotency.idempotency_key. Mirrors 0002_phase2.sql.
+    // =========================================================================
+    codeHash: text('code_hash').notNull(),
+    status: text('status').notNull().default('active'),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true, mode: 'date' }),
+    consumedByTelegramUserId: bigint('consumed_by_telegram_user_id', { mode: 'bigint' }),
+    consumedByExternalChatId: text('consumed_by_external_chat_id'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'channel_connect_codes_status_check',
+      sql`${t.status} IN ('active', 'consumed', 'expired')`,
+    ),
+    unique('channel_connect_codes_code_hash_unique').on(t.codeHash),
+    // Two narrow indexes: janitor sweeps via (status, expires_at); UI list via
+    // (workspace_id, status). Lookup by code_hash is covered by UNIQUE.
+    index('channel_connect_codes_status_expires_at_idx').on(t.status, t.expiresAt),
+    index('channel_connect_codes_workspace_idx').on(t.workspaceId, t.status),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
@@ -193,3 +310,9 @@ export type CommandIdempotencyRow = typeof commandIdempotency.$inferSelect;
 export type NewCommandIdempotencyRow = typeof commandIdempotency.$inferInsert;
 export type OperationLogRow = typeof operationLog.$inferSelect;
 export type NewOperationLogRow = typeof operationLog.$inferInsert;
+export type ContentChannelRow = typeof contentChannels.$inferSelect;
+export type NewContentChannelRow = typeof contentChannels.$inferInsert;
+export type ChannelConnectionRow = typeof channelConnections.$inferSelect;
+export type NewChannelConnectionRow = typeof channelConnections.$inferInsert;
+export type ChannelConnectCodeRow = typeof channelConnectCodes.$inferSelect;
+export type NewChannelConnectCodeRow = typeof channelConnectCodes.$inferInsert;

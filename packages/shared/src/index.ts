@@ -11,3 +11,12 @@ export {
   type InitDataErrorCode,
   type VerifyOptions,
 } from './telegram-initdata.js';
+export {
+  ChannelProjectionSchema,
+  ChannelListProjectionSchema,
+  ConnectCodeProjectionSchema,
+  buildConnectDeepLink,
+  type ChannelProjection,
+  type ChannelListProjection,
+  type ConnectCodeProjection,
+} from './channel-projection.js';

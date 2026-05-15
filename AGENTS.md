@@ -26,21 +26,11 @@ This is a standing project-level routing policy. If the runtime permits subagent
 
 Start non-trivial tasks with `work-router` unless the user named a specific skill or agent.
 
-## Phase Branch Rules
+## Project Rules
 
-Phase work must be recoverable by branch and reviewable by phase-only diff.
-
-- Keep one cumulative branch per phase: `phase/0-foundation`, `phase/1-identity`, `phase/2-channel-connection`, etc.
-- `phase/0-*` contains only Phase 0. `phase/1-*` contains Phase 0 plus Phase 1. `phase/N-*` contains all phases `0..N`, and nothing from later phases.
-- Keep `phase/base` as the baseline before Phase 0 implementation when available. If the old baseline is missing, document the inferred base commit in the loop report.
-- Phase boundaries are defined by branch diffs, not by the dirty working tree:
-  - Phase 0 diff: `phase/base..phase/0-foundation`
-  - Phase N diff: `phase/(N-1)-<slug>..phase/N-<slug>`
-- Every phase commit subject must start with `[phase N]`, `[phase N fix]`, `[phase N loop]`, or `[phase N docs]`. This lets agents identify where each phase starts and ends.
-- Add immutable closure tags after successful validation: `phase-N-start` at the previous phase branch head, and `phase-N-perfect` at the validated phase branch head. If a later fix changes the branch, add a new tag such as `phase-N-perfect-r2`; do not move old tags.
-- Run `step-perfect-loop` only after checking out the matching `phase/N-*` branch, and use only the phase diff above as the artifact. Do not validate Phase N from `main` if `main` already contains later phases.
-- If Phase K needs a fix after later phases exist, apply and commit it first on `phase/K-*`, then propagate the same logical fix forward into every branch that includes it: `phase/(K+1)-*`, `phase/(K+2)-*`, ..., current phase branch, and then `main`. Do not propagate fixes backward into earlier branches that should not contain that phase.
-- After propagating a fix, rerun the relevant `step-perfect-loop` on `phase/K-*`. For later branches, rerun checks only when the propagation caused conflicts or changed their phase-only diff.
+Read `PROJECT_RULES.md` before non-trivial work. It is the single source of
+truth for PostDash-specific startup, phase, database, validation, commit, and
+handoff rules. Keep `AGENTS.md` focused on Codex runtime mapping.
 
 ## Install Expectations
 
@@ -52,7 +42,7 @@ The portable setup should create:
 - `.codex/kit/*`
 - `.codex/kit/SUBAGENT_ROUTING.md`
 - root `AGENTS.md` with this runtime mapping section
-- project navigation files if missing: `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`
+- project rule/navigation files if missing: `PROJECT_RULES.md`, `PROJECT_MAP.md`, `ARCHITECTURE.md`, `architecture/_TEMPLATE.md`
 
 For Claude Code compatibility, `.claude/*` may also be installed in the same project.
 

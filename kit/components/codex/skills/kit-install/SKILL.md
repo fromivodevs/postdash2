@@ -40,6 +40,7 @@ Primary source of truth:
 7. Copy hooks and support files to `.codex/hooks` and `.codex/kit`.
 8. Append `kit/components/codex/AGENTS.md.addition` to root `AGENTS.md` if missing.
 9. Create project templates if missing:
+   - `PROJECT_RULES.md`
    - `PROJECT_MAP.md`
    - `ARCHITECTURE.md`
    - `architecture/_TEMPLATE.md`

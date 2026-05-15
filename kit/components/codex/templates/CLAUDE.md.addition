@@ -1,5 +1,7 @@
 ## Navigation
 
+- **PROJECT_RULES.md** — shared project-specific rules. Read before
+  non-trivial work.
 - **PROJECT_MAP.md** — карта файлов и систем. Читать перед навигацией
   по проекту вместо `Glob` всего подряд.
 - **ARCHITECTURE.md** — индекс систем. Каждая система — `architecture/<name>.md`.
@@ -9,6 +11,8 @@
 
 ## Workflow
 
+- Read **PROJECT_RULES.md** before non-trivial work. Durable project-specific
+  policy belongs there; `CLAUDE.md` stays a runtime shim.
 - pre-flight-check скилл срабатывает на triggering фразы перед
   non-trivial изменениями.
 - bug-hunt: тесты до фикса.

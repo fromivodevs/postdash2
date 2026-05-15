@@ -12,10 +12,11 @@
 - `eslint.config.js` — eslint 9 flat config
 - `.prettierrc.json` / `.prettierignore` — prettier
 - `docker-compose.yml` — Postgres 16 + pgvector локально
-- `.env.example` — каталог env-vars (см. `tg_mvp_plan/11-AI-PROVIDER.md §13`)
+- `.env.example` — каталог env-vars (см. `tg_mvp_plan/11-AI-PROVIDER.md §13`) + DB provider notes
 - `.gitattributes` — Windows-aware EOL правила
 - `.gitignore` — Node/Python/secrets/runtime artifacts
 - `.nvmrc` — Node 22 LTS pinned
+- `PROJECT_RULES.md` — single source of truth for PostDash-specific agent/project rules
 - `CLAUDE.md` — encoding rules + workflow conventions
 - `README.md` — quick start для разработчика
 - `ARCHITECTURE.md` — индекс per-system docs (см. `architecture/`)
@@ -88,10 +89,27 @@
 
 ## Systems index
 
-См. `ARCHITECTURE.md`. Активных systems пока нет — реальные системы появятся с Phase 1 (см. `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md`).
+См. `ARCHITECTURE.md`.
+
+- `architecture/channel-connection.md` — Phase 2 channel-connection system. *In design.* Planned files (not yet implemented):
+  - `packages/db/migrations/0002_phase2.sql` + `.down.sql`
+  - `packages/db/src/schema.ts` (additions: `contentChannels`, `channelConnections`, `channelConnectCodes`)
+  - `packages/domain/src/channel.ts`
+  - `packages/commands/src/{create-connect-code,connect-telegram-channel,connect-code-helpers,policies}.ts`
+  - `packages/channel-adapters/src/telegram/{index,types,errors,api-client,verify-connection}.ts`
+  - `apps/api/src/routes/{channels,channels-projection}.ts`
+  - `apps/api/src/bot/handlers/start-connect.ts`
+  - `apps/miniapp/src/screens/ChannelScreen.tsx` (rewrite of Phase 1 placeholder)
+  - `apps/miniapp/src/api/channels.ts`
+  - `apps/miniapp/src/components/CopyButton.tsx`
+  - `packages/shared/src/channel-projection.ts`
 
 ## Recent changes (last 10)
 
+- 2026-05-15: Centralized project-specific agent rules in `PROJECT_RULES.md`; `AGENTS.md` and `CLAUDE.md` now act as runtime shims. Kit now includes generic `PROJECT_RULES.md` templates, install guidance, diagnose drift checks, and final handoff guidance for loop commands.
+
+- 2026-05-15: Phase 2 architecture designed → `architecture/channel-connection.md` (3 tables, 2 commands, Telegram adapter, 3 routes, bot handler, Mini App screen rewrite). In design — implementation pending.
+- 2026-05-15: Added DB provider policy to `AGENTS.md`, `CLAUDE.md`, `README.md`, `.env.example`, and roadmap: local Docker Postgres by default, Neon for shared/prod because DB branches map to Git phase branches, Supabase/Render/Railway as explicit alternatives.
 - 2026-05-15: Added phase branch and commit-boundary rules: cumulative `phase/N-<slug>` branches, phase-only diff ranges, phase commit prefixes, immutable closure tags, and forward propagation for older phase fixes.
 - 2026-05-15: Phase 0 step-perfect-loop closure — 26 hardening fixes across 4 loop iterations (PERFECT score). Key additions: migrate advisory lock + sha256 checksum drift detection + 6 tests; `createAIProvider` placeholder-detect + prod hard-fail; `TemplateProvider` code-point-safe truncation; `TELEGRAM_POST_MAX_LENGTH` + `fitsTelegramPostLimit` in shared; `resolveVersion`/`sanitizeVersion` in health route; friendly ZodError wrappers in all env modules; `subagent-roadmap-reminder` hook; `.env.example` Observability section.
 - 2026-05-13: Phase 0 — foundation + AI scaffolding (11 workspace projects, 7 smoke tests, pnpm install OK, typecheck OK).

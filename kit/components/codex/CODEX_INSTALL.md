@@ -22,6 +22,8 @@ Copy policy:
 - Copy `kit/components/codex/templates/*` to `.codex/kit/templates/*`.
 - Copy `kit/VERSION` to `.codex/kit/VERSION`.
 - Append `kit/components/codex/AGENTS.md.addition` to root `AGENTS.md` if missing.
+- Create `PROJECT_RULES.md` from `kit/components/codex/templates/PROJECT_RULES.md`
+  if missing.
 
 Parallelization:
 

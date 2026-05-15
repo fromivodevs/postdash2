@@ -29,3 +29,29 @@ export {
   type ReadCurrentUserResult,
 } from './read-current-user.js';
 export { markBotBlocked, type MarkBotBlockedInput } from './mark-bot-blocked.js';
+export {
+  createConnectCode,
+  CreateConnectCodeInputSchema,
+  type CreateConnectCodeInput,
+  type CreateConnectCodeResult,
+} from './create-connect-code.js';
+export {
+  connectTelegramChannel,
+  ConnectTelegramChannelInputSchema,
+  type ConnectTelegramChannelInput,
+  type ConnectTelegramChannelResult,
+  type TelegramChannelAdapter,
+  type VerifyConnectionInput,
+  type VerifyConnectionResult,
+} from './connect-telegram-channel.js';
+export {
+  generateConnectCode,
+  hashConnectCode,
+  lookupActiveCode,
+  validateConnectCode,
+} from './connect-code-helpers.js';
+export {
+  assertWorkspaceRole,
+  ROLE_RANK,
+  type WorkspaceMinRole,
+} from './policies.js';

@@ -3,9 +3,11 @@ import rateLimit from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { AIProviderError, type AIProvider, type AIProviderErrorCode } from '@postdash/ai';
+import type { TelegramChannelAdapter } from '@postdash/commands';
 import type { Pool } from '@postdash/db';
 import type { Bot } from 'grammy';
 import { authTelegramRoute } from './routes/auth-telegram.js';
+import { channelsRoute } from './routes/channels.js';
 import { healthRoutes } from './routes/health.js';
 import { meRoute } from './routes/me.js';
 import { readyRoutes } from './routes/ready.js';
@@ -38,6 +40,13 @@ export interface AppDeps {
   pool?: Pool;
   ai?: AIProvider;
   bot?: Bot;
+  /**
+   * Phase 2: Telegram channel adapter, used by `POST /channels/connect`.
+   * Resolved at startup via `bot.api.getMe()` (see `index.ts`); on getMe
+   * failure the field is left `undefined` and the channels mutation routes
+   * 503 cleanly. Read paths (`GET /channels`) do not require it.
+   */
+  channelAdapter?: TelegramChannelAdapter;
 }
 
 export async function buildApp(
@@ -173,6 +182,16 @@ export async function buildApp(
   await app.register(meRoute, {
     botToken: env.TELEGRAM_BOT_TOKEN,
     initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
+  });
+  // Channel-connection routes (Phase 2). Same self-503 contract as auth/me:
+  // pool / bot token / bot username / adapter absences trigger 503 inside the
+  // route preflight rather than blowing up plugin registration. This keeps
+  // the API serving auth/identity even if a Phase 2 dep is misconfigured.
+  await app.register(channelsRoute, {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
+    botUsername: env.TELEGRAM_BOT_USERNAME,
+    channelAdapter: deps.channelAdapter,
   });
 
   if (deps.bot) {

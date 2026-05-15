@@ -1,4 +1,8 @@
 import { createAIProvider, parseAIEnv } from '@postdash/ai';
+import {
+  createTelegramChannelAdapter,
+  type TelegramChannelAdapter,
+} from '@postdash/channel-adapters';
 import { markBotBlocked } from '@postdash/commands';
 import { createPool, parseDbEnv } from '@postdash/db';
 import type { Bot } from 'grammy';
@@ -49,10 +53,51 @@ if (env.TELEGRAM_BOT_TOKEN.trim()) {
     onBotBlocked: async (telegramUserId) => {
       await markBotBlocked(pool.db, { telegramUserId });
     },
+    // Phase 2: bot uses `validateConnectCode` on `/start connect_<code>` to
+    // give the user a tailored reply (active / expired / consumed / unknown)
+    // before nudging them into the Mini App.
+    db: pool.db,
   });
 }
 
-const app = await buildApp(env, bot ? { pool, ai, bot } : { pool, ai });
+// Resolve the bot's own user_id via `getMe()` — needed by the channel adapter
+// to call `getChatMember(chat_id, user_id=bot)` when verifying post permission.
+// This is a STARTUP, BOOTSTRAP call (architecture doc Invariant 3 carves out
+// the only Bot API call permitted outside `packages/channel-adapters`).
+//
+// Failure-mode policy (architecture doc Risks §1): if getMe fails we keep the
+// API running. The channels mutation routes 503 cleanly via the
+// `requireAdapter:true` preflight guard — the rest of the API (auth, /me,
+// webhook) is unaffected. Eager-fail would gate ALL endpoints on a Telegram
+// reachability check, which is over-coupling for an MVP.
+let channelAdapter: TelegramChannelAdapter | undefined;
+if (bot) {
+  try {
+    const me = await bot.api.getMe();
+    // getMe.id is a positive int64-fitting-in-Number for any real bot —
+    // Telegram bot ids are well below 2^53. The adapter factory re-validates.
+    channelAdapter = createTelegramChannelAdapter({
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      botUserId: me.id,
+    });
+    activeLogger.info(
+      { botUserId: me.id, botUsername: me.username },
+      'telegram channel adapter wired',
+    );
+  } catch (err) {
+    activeLogger.warn(
+      { err },
+      'bot.api.getMe() failed; channel adapter NOT wired — POST /channels/connect will 503',
+    );
+  }
+}
+
+const app = await buildApp(
+  env,
+  bot
+    ? { pool, ai, bot, ...(channelAdapter ? { channelAdapter } : {}) }
+    : { pool, ai },
+);
 
 // Re-point the bot's logger ref to the Fastify app logger so /start logs and
 // rate-limit warnings land in the unified pino pipeline.

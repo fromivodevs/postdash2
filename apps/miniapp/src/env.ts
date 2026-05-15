@@ -9,6 +9,27 @@ const emptyToUndefined = (v: unknown): unknown => (v === '' ? undefined : v);
 const schema = z.object({
   VITE_API_URL: z.preprocess(emptyToUndefined, z.string().url().default('http://localhost:3000')),
   VITE_BUILD_VERSION: z.preprocess(emptyToUndefined, z.string().min(1).default('dev')),
+  // Canonical bot @username WITHOUT the leading `@` (e.g. `postdash_bot`).
+  // Mirrors apps/api/src/env.ts TELEGRAM_BOT_USERNAME — used by ChannelScreen's
+  // PendingView to render the connect deep-link via `buildConnectDeepLink`.
+  //
+  // emptyToUndefined coerces an empty/missing value to undefined so the regex
+  // never runs against ''. The trailing `.transform` collapses the optional
+  // back to '' so the consumer always reads a string. When unset, the
+  // PendingView hides the deep-link copy button rather than producing a broken
+  // `https://t.me/?start=...` URL.
+  VITE_TELEGRAM_BOT_USERNAME: z
+    .preprocess(
+      emptyToUndefined,
+      z
+        .string()
+        .regex(
+          /^[A-Za-z0-9_]+$/,
+          'VITE_TELEGRAM_BOT_USERNAME may only contain A-Za-z0-9_ (Telegram username charset; no leading @)',
+        )
+        .optional(),
+    )
+    .transform((v) => v ?? ''),
 });
 
 /**

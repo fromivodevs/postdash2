@@ -1,5 +1,7 @@
 import { Bot, type Context } from 'grammy';
+import type { Database } from '@postdash/db';
 import { RateLimiter } from './rate-limit.js';
+import { handleStartConnect } from './handlers/start-connect.js';
 
 /**
  * Minimal structural logger contract. Pino's Logger and Fastify's
@@ -29,6 +31,15 @@ export interface BotDeps {
    * DB-aware caller is allowed (the bot still functions for /start etc.).
    */
   onBotBlocked?: (telegramUserId: number) => Promise<void>;
+  /**
+   * DB handle for read-only side-paths the bot owns (Phase 2: validating
+   * `/start connect_<code>` payloads via `validateConnectCode`). Optional:
+   * when missing, the `kind:'connect'` deep-link still opens the Mini App
+   * via the inline button — we just skip the bot-side code validation reply.
+   * This mirrors the `onBotBlocked` optional-DB pattern so a bot without a
+   * pool still functions for /start, /help, and block detection.
+   */
+  db?: Database;
 }
 
 /** Parsed `/start` deep-link payload (e.g., `/start connect_abc123`). */
@@ -101,6 +112,35 @@ export function buildBot(deps: BotDeps): Bot {
       },
       '/start command received',
     );
+
+    // Phase 2 routing: `/start connect_<code>` validates the code (does NOT
+    // consume it — the actual binding happens in the Mini App via POST
+    // /channels/connect, per architecture doc Decision "bot acts as validator
+    // only"). The validation reply is in addition to — not instead of — the
+    // standard `START_MESSAGE` + inline button, so the user always gets a
+    // path forward into the Mini App.
+    if (parsed?.kind === 'connect' && parsed.id && deps.db) {
+      const tgUserId = ctx.from?.id;
+      if (tgUserId !== undefined) {
+        try {
+          await handleStartConnect(
+            {
+              db: deps.db,
+              reply: (text) => ctx.reply(text).then(() => undefined),
+              log: deps.getLogger(),
+            },
+            { code: parsed.id, telegramUserId: tgUserId },
+          );
+        } catch (err) {
+          // Validation is best-effort: a DB hiccup should NOT prevent the user
+          // from seeing the inline button to the Mini App. Log and continue.
+          deps.getLogger().error(
+            { err, telegramUserId: tgUserId },
+            'start-connect handler failed; continuing with default reply',
+          );
+        }
+      }
+    }
 
     const url = buildMiniAppUrl(deps.miniAppUrl, deps.buildVersion, parsed);
     await ctx.reply(START_MESSAGE, {

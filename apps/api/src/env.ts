@@ -27,6 +27,20 @@ export const apiEnvSchema = z
     // on startup; when unset, the bot falls back to long-polling (dev default).
     TELEGRAM_WEBHOOK_URL: z.string().url().optional(),
     TELEGRAM_INITDATA_MAX_AGE_SEC: z.coerce.number().int().positive().default(86_400),
+    // Canonical bot @username WITHOUT the leading `@` (e.g. `postdash_bot`).
+    // Used by `buildConnectDeepLink` to construct
+    // `https://t.me/<username>?start=connect_<code>` for the channel-connect
+    // deep-link surfaced by `POST /channels/connect-codes`. A leading `@` is
+    // rejected at boot rather than silently normalized — see channel-projection
+    // helper rationale. Default empty: the channels route returns 503 if the
+    // operator forgot to set it.
+    TELEGRAM_BOT_USERNAME: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_]*$/,
+        'TELEGRAM_BOT_USERNAME may only contain A-Za-z0-9_ (Telegram username charset; no leading @)',
+      )
+      .default(''),
     MINIAPP_URL: z.string().url().default('http://localhost:5173'),
     MINIAPP_BUILD_VERSION: z.string().default('dev'),
     BOT_RATE_LIMIT_MAX_PER_MINUTE: z.coerce.number().int().positive().default(10),
