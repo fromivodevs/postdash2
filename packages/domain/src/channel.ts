@@ -111,3 +111,43 @@ export interface ChannelConnectCode {
   // from the DB because only sha256(code) is persisted. See architecture doc
   // Invariant 1.
 }
+
+// =============================================================================
+// Narrowers: bare `text` columns -> domain union types.
+//
+// The DB stores `content_channels.type`, `channel_connections.status`, and
+// `channel_connections.last_verify_status` as bare `text` with a CHECK
+// constraint. Drizzle returns them as `string`; consumers need the domain
+// union. These helpers live here (in @postdash/domain) so command code and
+// route code share ONE definition — drift between two copies would be a real
+// risk (we hit it once; the helpers were duplicated in commands + routes).
+// =============================================================================
+
+export function narrowChannelType(s: string): ChannelType {
+  if (s === 'supergroup') return 'supergroup';
+  if (s === 'group') return 'group';
+  if (s === 'private_chat') return 'private_chat';
+  return 'channel';
+}
+
+export function narrowConnectionStatus(s: string): ChannelConnectionStatus {
+  if (s === 'connected') return 'connected';
+  if (s === 'broken') return 'broken';
+  if (s === 'revoked') return 'revoked';
+  return 'pending';
+}
+
+export function narrowVerifyStatus(s: string): ChannelVerifyStatus {
+  switch (s) {
+    case 'ok':
+    case 'bot_not_admin':
+    case 'missing_post_permission':
+    case 'chat_not_found':
+    case 'bot_blocked':
+    case 'network':
+    case 'unauthorized':
+      return s;
+    default:
+      return 'unknown';
+  }
+}

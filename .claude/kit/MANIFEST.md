@@ -179,7 +179,10 @@ Specialists installed but not called by default:
 - Hooks: copy all.
 - Commands: copy all for the selected target when supported.
 - Settings: merge only; never replace.
-- Project templates: create only if missing, including `PROJECT_RULES.md`.
+- Project templates: create only if missing.
+- `PROJECT_RULES.md`: create if missing; if present, preserve existing content
+  and append only missing generic sections from the kit template. Never
+  overwrite or rewrite project-specific rules during kit install/update.
 - `CLAUDE.md`: append only if missing for Claude target.
 - `AGENTS.md`: append only if missing for Codex target.
 - Runtime artifacts: never copy.

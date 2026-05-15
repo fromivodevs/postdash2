@@ -28,7 +28,13 @@
 
 import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
-import type { ChannelConnection, ContentChannel } from '@postdash/domain';
+import {
+  narrowChannelType,
+  narrowConnectionStatus,
+  narrowVerifyStatus,
+  type ChannelConnection,
+  type ContentChannel,
+} from '@postdash/domain';
 import type { Database, DbOrTx } from '@postdash/db';
 import {
   channelConnectCodes,
@@ -42,16 +48,10 @@ import { runIdempotent } from './idempotency.js';
 import { hashConnectCode, lookupActiveCode } from './connect-code-helpers.js';
 import { assertWorkspaceRole } from './policies.js';
 
-/**
- * Minimal `TelegramChannelAdapter` interface duplicated here from
- * `packages/channel-adapters/src/telegram/index.ts` (which lands in Phase 2
- * chunk 2). Once that package exists, this local definition is replaced by
- * an import — the shape is held identical so the swap is mechanical.
- *
- * Layer rule: `@postdash/commands` does NOT import `@postdash/channel-adapters`.
- * The adapter is passed in as a parameter (DI). See architecture doc
- * Dependency graph note "commands does not depend on channel-adapters".
- */
+// NOTE: TelegramChannelAdapter / VerifyConnectionResult are intentionally
+// re-declared here (not imported from @postdash/channel-adapters) to preserve
+// the commands↛adapters layer boundary. The contract is mirrored by hand;
+// see architecture/channel-connection.md Decision log.
 export interface VerifyConnectionInput {
   externalChatId: string;
 }
@@ -455,45 +455,6 @@ function rowToChannelConnection(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-}
-
-function narrowChannelType(s: string): 'channel' | 'supergroup' | 'group' | 'private_chat' {
-  if (s === 'supergroup') return 'supergroup';
-  if (s === 'group') return 'group';
-  if (s === 'private_chat') return 'private_chat';
-  return 'channel';
-}
-
-function narrowConnectionStatus(s: string): 'pending' | 'connected' | 'broken' | 'revoked' {
-  if (s === 'connected') return 'connected';
-  if (s === 'broken') return 'broken';
-  if (s === 'revoked') return 'revoked';
-  return 'pending';
-}
-
-function narrowVerifyStatus(
-  s: string,
-):
-  | 'ok'
-  | 'bot_not_admin'
-  | 'missing_post_permission'
-  | 'chat_not_found'
-  | 'bot_blocked'
-  | 'network'
-  | 'unauthorized'
-  | 'unknown' {
-  switch (s) {
-    case 'ok':
-    case 'bot_not_admin':
-    case 'missing_post_permission':
-    case 'chat_not_found':
-    case 'bot_blocked':
-    case 'network':
-    case 'unauthorized':
-      return s;
-    default:
-      return 'unknown';
-  }
 }
 
 /**

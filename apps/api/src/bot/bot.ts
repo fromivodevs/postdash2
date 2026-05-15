@@ -49,12 +49,39 @@ export interface StartPayload {
   id: string | null;
 }
 
+/**
+ * Hard upper bound on `/start` payload length. Telegram itself caps deep-link
+ * payloads at 64 chars; anything longer is junk/abuse (a 1MB blob streamed
+ * through sha256 wastes log bytes for nothing). We reject with kind:'unknown'
+ * and a sentinel raw so downstream logging stays cheap.
+ */
+const START_PAYLOAD_MAX_LEN = 64;
+/**
+ * Hard upper bound on the connect-code id segment. Crockford codes are 8
+ * chars today; we accept up to 16 to allow a future format bump without a
+ * code change here. Anything longer is not a real code and should not even
+ * reach `validateConnectCode` (which sha256-hashes the input).
+ */
+const CONNECT_CODE_MAX_LEN = 20;
+
 export function parseStartPayload(payload: string): StartPayload | null {
   if (!payload) return null;
   const trimmed = payload.trim();
   if (!trimmed) return null;
+  // Length cap: reject oversized payloads before any string slicing / DB hash.
+  if (trimmed.length > START_PAYLOAD_MAX_LEN) {
+    return { raw: '<truncated>', kind: 'unknown', id: null };
+  }
   if (trimmed.startsWith('connect_')) {
-    return { raw: trimmed, kind: 'connect', id: trimmed.slice('connect_'.length) || null };
+    const id = trimmed.slice('connect_'.length) || null;
+    // Codes are 8 chars in practice; cap defensively so junk like
+    // `connect_<200 chars>` doesn't reach validateConnectCode. We sentinel
+    // the raw out too so a partial-leak of the prefix doesn't sneak into
+    // downstream logging via the kind:'unknown' fallback.
+    if (id && id.length > CONNECT_CODE_MAX_LEN) {
+      return { raw: '<truncated>', kind: 'unknown', id: null };
+    }
+    return { raw: trimmed, kind: 'connect', id };
   }
   if (trimmed.startsWith('draft_')) {
     return { raw: trimmed, kind: 'draft', id: trimmed.slice('draft_'.length) || null };
@@ -104,14 +131,18 @@ export function buildBot(deps: BotDeps): Bot {
   bot.command('start', async (ctx) => {
     const payloadStr = ctx.match;
     const parsed = parseStartPayload(payloadStr ?? '');
-    deps.getLogger().info(
-      {
-        telegramUserId: ctx.from?.id,
-        payload: parsed?.raw ?? null,
-        kind: parsed?.kind ?? null,
-      },
-      '/start command received',
-    );
+    // SECURITY: plaintext connect code MUST NEVER appear in logs (Invariant 1, channel-connection.md).
+    // For `kind:'connect'` we log only the kind discriminator — the raw payload
+    // contains the plaintext code. For other kinds the raw is safe to peek at,
+    // but we still truncate to 8 chars so a junk payload can't bloat logs.
+    const logPayload: Record<string, unknown> = {
+      telegramUserId: ctx.from?.id,
+      kind: parsed?.kind ?? null,
+    };
+    if (parsed && parsed.kind !== 'connect') {
+      logPayload['payload_prefix'] = parsed.raw.slice(0, 8);
+    }
+    deps.getLogger().info(logPayload, '/start command received');
 
     // Phase 2 routing: `/start connect_<code>` validates the code (does NOT
     // consume it — the actual binding happens in the Mini App via POST

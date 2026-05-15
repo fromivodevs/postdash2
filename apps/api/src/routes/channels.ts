@@ -38,6 +38,11 @@ import {
   readCurrentUser,
   type TelegramChannelAdapter,
 } from '@postdash/commands';
+import {
+  narrowChannelType,
+  narrowConnectionStatus,
+  narrowVerifyStatus,
+} from '@postdash/domain';
 import { channelConnections, contentChannels } from '@postdash/db';
 import { extractInitData } from '../auth/extract-initdata.js';
 import {
@@ -487,45 +492,3 @@ function handleChannelCommandError(
   throw err;
 }
 
-function narrowConnectionStatus(
-  s: string,
-): 'pending' | 'connected' | 'broken' | 'revoked' {
-  if (s === 'connected') return 'connected';
-  if (s === 'broken') return 'broken';
-  if (s === 'revoked') return 'revoked';
-  return 'pending';
-}
-
-function narrowVerifyStatus(
-  s: string,
-):
-  | 'ok'
-  | 'bot_not_admin'
-  | 'missing_post_permission'
-  | 'chat_not_found'
-  | 'bot_blocked'
-  | 'network'
-  | 'unauthorized'
-  | 'unknown' {
-  switch (s) {
-    case 'ok':
-    case 'bot_not_admin':
-    case 'missing_post_permission':
-    case 'chat_not_found':
-    case 'bot_blocked':
-    case 'network':
-    case 'unauthorized':
-      return s;
-    default:
-      return 'unknown';
-  }
-}
-
-function narrowChannelType(
-  s: string,
-): 'channel' | 'supergroup' | 'group' | 'private_chat' {
-  if (s === 'supergroup') return 'supergroup';
-  if (s === 'group') return 'group';
-  if (s === 'private_chat') return 'private_chat';
-  return 'channel';
-}

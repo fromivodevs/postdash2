@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS channel_connections (
       'ok', 'bot_not_admin', 'missing_post_permission',
       'chat_not_found', 'bot_blocked', 'network', 'unauthorized', 'unknown'
     )),
+  -- Hard upper bound on last_verify_error length. Architecture doc says
+  -- "<=200 chars, never stack trace"; enforcing the cap at the DB so an
+  -- accidental log-spillover in a future verify path can't bloat the row.
+  CONSTRAINT channel_connections_last_verify_error_length_check
+    CHECK (last_verify_error IS NULL OR length(last_verify_error) <= 200),
   -- Phase 2: one workspace can own a content_channel. Phase 9 may relax to
   -- a partial-unique excluding 'revoked', but for MVP this enforces edge-case
   -- 3.3 ("channel taken by another workspace").

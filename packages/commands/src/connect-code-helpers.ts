@@ -24,41 +24,54 @@ import { channelConnectCodes } from '@postdash/db';
 
 /**
  * Crockford base32 alphabet WITHOUT the visually-confusable characters
- * (0/O, 1/I/L). 32 symbols means each character is exactly 5 bits.
+ * (0/O, 1/I/L). 31 symbols — one short of a power of two.
  *
  * Deliberate: I/L/U are also commonly excluded in Crockford to avoid spelling
  * profanity by accident; we include U here because the UX risk is low for
- * 8-char codes and excluding U would drop the alphabet below 32 (no longer
- * an integer number of bits per char).
+ * 8-char codes and excluding U too would drop the alphabet to 30 (further
+ * from a power of two, not closer).
+ *
+ * Distribution note: an earlier revision padded this to 32 chars with an
+ * extra 'R' so a flat `byte % 32` mapping worked, but that doubled the
+ * frequency of 'R'. The current generator uses rejection sampling against
+ * the 31-symbol alphabet so every character is exactly equiprobable.
  */
 const CROCKFORD_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-// 31 chars after dropping 0/O/1/I/L — round down to next power of two by
-// computing `byte % 32` against a 32-symbol indexable table padded with one
-// repeat. We pad with a high-frequency consonant to keep distribution flat.
-const CROCKFORD_TABLE = `${CROCKFORD_ALPHABET}R`;
+/**
+ * Largest multiple of 31 that fits in a byte (31 * 8 = 248). Bytes >= 248
+ * are rejected to keep the modulo unbiased. Acceptance rate: 248/256 ≈
+ * 96.9% — every 8th byte on average is re-rolled, which is cheap.
+ */
+const ACCEPT_CEIL = 248;
 
 /**
- * Generates an 8-character connect code. ~40 bits of entropy.
+ * Generates an 8-character connect code. ~40 bits of entropy
+ * (log2(31^8) ≈ 39.6 bits — close enough to the documented 40-bit target).
  *
- * Implementation: read 8 random bytes via `node:crypto.randomBytes` (CSPRNG),
- * map each byte to a Crockford char via `byte % 32` indexing the padded
- * 32-symbol table. We deliberately do NOT use `randomInt` per-character —
- * one `randomBytes(8)` call is cheaper and the modulo bias on a 256-mod-32
- * mapping is negligible (one symbol gets ~3.1% over-representation).
+ * Implementation: stream random bytes from `node:crypto.randomBytes` (CSPRNG)
+ * and rejection-sample against a 31-symbol Crockford alphabet. Rejection is
+ * mandatory because 256 is not a multiple of 31 — a plain `byte % 31` mapping
+ * would over-represent the first 8 symbols (`2..9`) by ~1/31. We oversize
+ * the initial draw to keep the expected number of random reads at 1.
  */
 export function generateConnectCode(): string {
-  const bytes = randomBytes(8);
   let out = '';
-  for (let i = 0; i < 8; i++) {
-    // i in [0,8) and bytes is length 8, so bytes[i] is never undefined in
-    // practice — but strict TS with noUncheckedIndexedAccess flags it. Use
-    // ?? 0 as a safety floor; the resulting char is still valid Crockford.
-    const b = bytes[i] ?? 0;
-    const idx = b % 32;
-    // CROCKFORD_TABLE is length 32 and idx is in [0,32), so charAt always
-    // returns a real char. Avoid the empty-string degenerate explicitly so
-    // strict tests can assert `match(/^[2-9A-Z]{8}$/)`.
-    out += CROCKFORD_TABLE.charAt(idx);
+  // 16 bytes is ~2x the expected need (acceptance rate ~96.9%); covers 8
+  // accepted bytes with overwhelming probability in a single CSPRNG call.
+  let pool = randomBytes(16);
+  let cursor = 0;
+  while (out.length < 8) {
+    if (cursor >= pool.length) {
+      // Extremely unlikely (>16 rejects in a row): top up the pool.
+      pool = randomBytes(16);
+      cursor = 0;
+    }
+    const b = pool[cursor] ?? 0;
+    cursor += 1;
+    if (b >= ACCEPT_CEIL) continue; // reject to avoid modulo bias
+    const idx = Math.floor(b / 8); // b in [0,248) -> idx in [0,31)
+    // CROCKFORD_ALPHABET has length 31; idx is bounded by construction.
+    out += CROCKFORD_ALPHABET.charAt(idx);
   }
   return out;
 }
@@ -175,4 +188,4 @@ function narrowCodeStatus(s: string): 'active' | 'consumed' | 'expired' {
   return 'active';
 }
 
-export const _testInternals = { CROCKFORD_ALPHABET, CROCKFORD_TABLE };
+export const _testInternals = { CROCKFORD_ALPHABET };

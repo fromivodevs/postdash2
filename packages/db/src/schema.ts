@@ -249,6 +249,14 @@ export const channelConnections = pgTable(
         'chat_not_found', 'bot_blocked', 'network', 'unauthorized', 'unknown'
       )`,
     ),
+    // Hard upper bound on last_verify_error length. Architecture doc says
+    // "<=200 chars, never stack trace"; enforcing the cap at the DB so an
+    // accidental log-spillover in a future verify path can't bloat the row.
+    // Mirrors channel_connections_last_verify_error_length_check in 0002_phase2.sql.
+    check(
+      'channel_connections_last_verify_error_length_check',
+      sql`${t.lastVerifyError} IS NULL OR length(${t.lastVerifyError}) <= 200`,
+    ),
     // Phase 2: one workspace owns each content_channel. Phase 9 may relax to
     // a partial-unique excluding 'revoked'. Enforces edge case 3.3 (channel
     // taken by another workspace).

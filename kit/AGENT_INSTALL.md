@@ -38,6 +38,9 @@ Do not run an installer script. Do the work directly as the acting agent.
 6. Keep PowerShell hooks ASCII-only.
 7. After installation, run the diagnostic command or execute `.claude/kit/diagnose.ps1`.
 8. Do not copy Claude model names into Codex agents. Use the model mapping below.
+9. `PROJECT_RULES.md` is merge-only: create it when missing; when present,
+   append only missing generic sections from the kit template, preserve all
+   project-specific content, and report skipped conflicting sections.
 
 ## Platform Detection
 
@@ -158,6 +161,10 @@ Create only if missing:
 - `PROJECT_MAP.md` from `kit/components/templates/PROJECT_MAP.md`
 - `ARCHITECTURE.md` from `kit/components/templates/ARCHITECTURE.md`
 - `architecture/_TEMPLATE.md` from `kit/components/templates/architecture-system-template.md`
+
+If `PROJECT_RULES.md` already exists, do not overwrite it. Merge only missing
+generic sections from the template. If the same heading exists with different
+content, keep the project version and report that section as skipped.
 
 Merge `.gitattributes`:
 

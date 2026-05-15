@@ -15,6 +15,20 @@ policy here so Claude, Codex, and future agents read the same source.
 - If a rule is universal for every project, it may go into kit. If it depends on
   this project, keep it here.
 
+## Project Rules Merge Policy
+
+Kit installation must never overwrite this file.
+
+- If `PROJECT_RULES.md` is missing, create it from the kit template.
+- If `PROJECT_RULES.md` already exists, preserve all existing content and append
+  only missing generic sections from the kit template.
+- Do not delete, reorder, or rewrite project-specific sections during kit
+  install/update.
+- If a generic section has the same heading but different content, leave the
+  project version intact and report the difference as a skipped merge.
+- Any manual cleanup of project rules must be a separate explicit change, not an
+  implicit side effect of kit installation.
+
 ## Startup Entry
 
 - Keep one canonical project startup entrypoint. If the project already has

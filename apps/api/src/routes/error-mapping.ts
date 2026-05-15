@@ -76,6 +76,12 @@ const CHANNEL_DETAILS_TABLE: Record<string, SanitizedCommandError | null> = {
   chat_not_found: { status: 400, message: 'channel not found' },
   bot_blocked: { status: 400, message: 'bot is blocked' },
   unauthorized: { status: 400, message: 'bot is unauthorized for the channel' },
+  // Bot-initiated path only (`invokedBy.source === 'bot'`): the Mini App route
+  // surface never produces these because `readCurrentUser` already gates by
+  // verified identity. They're listed here for parity with the command's
+  // capability surface — a future bot-driven connect endpoint would need them.
+  bot_user_unknown: { status: 403, message: 'bot user not recognised' },
+  bot_user_inactive: { status: 403, message: 'bot user not active' },
 };
 
 /**

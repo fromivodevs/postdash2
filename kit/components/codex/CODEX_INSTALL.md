@@ -23,7 +23,8 @@ Copy policy:
 - Copy `kit/VERSION` to `.codex/kit/VERSION`.
 - Append `kit/components/codex/AGENTS.md.addition` to root `AGENTS.md` if missing.
 - Create `PROJECT_RULES.md` from `kit/components/codex/templates/PROJECT_RULES.md`
-  if missing.
+  if missing. If it already exists, preserve it and append only missing generic
+  sections from the template; never overwrite project-specific rules.
 
 Parallelization:
 

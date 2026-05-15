@@ -25,9 +25,12 @@ Primary source of truth:
 2. Copy files directly as the acting Codex agent.
 3. Copy role agents in parallel when tool support allows it.
 4. Do not overwrite user-modified files blindly.
-5. Do not copy runtime artifacts.
-6. Run `.codex/kit/diagnose.ps1` before reporting success.
-7. Use Codex model mapping: opus -> `gpt-5.5`, sonnet -> `gpt-5.4`, haiku -> `gpt-5.4-mini`.
+5. Treat `PROJECT_RULES.md` as merge-only: create it when missing; when present,
+   append only missing generic sections from the kit template, preserve all
+   project-specific content, and report skipped conflicting sections.
+6. Do not copy runtime artifacts.
+7. Run `.codex/kit/diagnose.ps1` before reporting success.
+8. Use Codex model mapping: opus -> `gpt-5.5`, sonnet -> `gpt-5.4`, haiku -> `gpt-5.4-mini`.
 
 ## Workflow
 
@@ -44,7 +47,9 @@ Primary source of truth:
    - `PROJECT_MAP.md`
    - `ARCHITECTURE.md`
    - `architecture/_TEMPLATE.md`
-10. Run:
+10. If `PROJECT_RULES.md` already exists, merge only missing generic sections
+    from the template. Do not overwrite or rewrite existing sections.
+11. Run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\.codex\kit\diagnose.ps1
