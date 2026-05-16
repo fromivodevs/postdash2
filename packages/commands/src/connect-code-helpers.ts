@@ -133,30 +133,50 @@ export async function lookupActiveCode(
 
 /**
  * Read-only existence check used by the bot-side `/start connect_<code>`
- * handler. Does NOT take a row lock and does NOT consume the code — the bot
- * flow's purpose is to UX-validate the code, then nudge the user to finish
- * binding in the Mini App.
+ * handler AND the POST /channels/connect route's PRE-command UX layer.
+ * Does NOT take a row lock and does NOT consume the code.
  *
- * Returns:
+ * Returns a discriminated object so callers can both:
+ *   - branch on `status` (bot reply copy, route HTTP status), and
+ *   - read `workspaceId` (route uses it to fail-fast on cross-workspace
+ *     mismatch BEFORE entering the side-effectful command, avoiding the
+ *     "binding committed but route 403s" UX trap).
+ *
+ * Statuses:
  *   - `'ok'`           — code exists, status='active', not expired.
  *   - `'expired'`      — code exists but `expires_at` is past OR status='expired'.
  *   - `'consumed'`     — code exists with status='consumed'.
- *   - `'not_found'`    — no row matches code_hash.
+ *   - `'unknown'`      — no row matches code_hash.
+ *
+ * `workspaceId` is present on every found-row status (`ok`, `expired`,
+ * `consumed`) and absent on `'unknown'`. The bot handler can ignore it; the
+ * route handler uses it for the pre-check.
  *
  * Takes a `Database` (pool handle) rather than a transaction so the bot
  * handler doesn't need to open a tx for a single SELECT.
  */
+export type ValidateConnectCodeStatus = 'ok' | 'expired' | 'consumed' | 'unknown';
+
+export interface ValidateConnectCodeResult {
+  status: ValidateConnectCodeStatus;
+  /** Present iff the code_hash matched a row. Absent on `'unknown'`. */
+  workspaceId?: string;
+}
+
 export async function validateConnectCode(
   db: Database,
   code: string,
-): Promise<'ok' | 'expired' | 'consumed' | 'not_found'> {
+): Promise<ValidateConnectCodeResult> {
   const codeHash = hashConnectCode(code);
   // Active-and-not-expired short-circuit: a single query that returns ONE row
   // iff the code is usable. If it returns nothing, we do a second query to
-  // distinguish "never existed" from "exists but expired/consumed" so the bot
-  // can give the user a specific error message.
+  // distinguish "never existed" from "exists but expired/consumed" so the
+  // caller can give the user a specific error message.
   const okRows = await db
-    .select({ id: channelConnectCodes.id })
+    .select({
+      id: channelConnectCodes.id,
+      workspaceId: channelConnectCodes.workspaceId,
+    })
     .from(channelConnectCodes)
     .where(
       and(
@@ -166,20 +186,25 @@ export async function validateConnectCode(
       ),
     )
     .limit(1);
-  if (okRows[0]) return 'ok';
+  const okRow = okRows[0];
+  if (okRow) return { status: 'ok', workspaceId: okRow.workspaceId };
 
   const anyRows = await db
-    .select({ status: channelConnectCodes.status, expiresAt: channelConnectCodes.expiresAt })
+    .select({
+      status: channelConnectCodes.status,
+      expiresAt: channelConnectCodes.expiresAt,
+      workspaceId: channelConnectCodes.workspaceId,
+    })
     .from(channelConnectCodes)
     .where(eq(channelConnectCodes.codeHash, codeHash))
     .limit(1);
   const row = anyRows[0];
-  if (!row) return 'not_found';
+  if (!row) return { status: 'unknown' };
   const status = narrowCodeStatus(row.status);
-  if (status === 'consumed') return 'consumed';
+  if (status === 'consumed') return { status: 'consumed', workspaceId: row.workspaceId };
   // status='active' but the OK query missed it -> expires_at is past.
   // status='expired' -> trivially expired.
-  return 'expired';
+  return { status: 'expired', workspaceId: row.workspaceId };
 }
 
 function narrowCodeStatus(s: string): 'active' | 'consumed' | 'expired' {

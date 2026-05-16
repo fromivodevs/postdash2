@@ -55,7 +55,26 @@ const REPLY_COPY = {
   consumed: 'Этот код уже использован.',
   unknown: 'Код не найден.',
   empty: 'Код не указан. Открой Mini App и создай новый.',
+  /**
+   * Soft failure copy for the DB timeout path. Telegram /start updates have
+   * a ~10s budget end-to-end; if `validateConnectCode` (2 SELECTs) doesn't
+   * answer within 2s we surrender the validation step and tell the user to
+   * retry. A retry storm under DB pressure would amplify load — the user-
+   * facing copy keeps it generic so it works for any transient backend issue.
+   */
+  timeout: 'Что-то пошло не так. Попробуй позже.',
 } as const;
+
+/**
+ * Hard ceiling on `validateConnectCode` round-trip time inside the bot
+ * handler. Two DB SELECTs against a healthy pool finish in ~10-50ms; 2s is
+ * an order of magnitude headroom that still leaves the /start handler well
+ * inside Telegram's ~10s budget if the user-visible `ctx.reply` then takes
+ * another second. Pool saturation or a slow Postgres would otherwise let
+ * this handler hang for the full Telegram budget and trigger /start retries
+ * that amplify load.
+ */
+const VALIDATE_CONNECT_CODE_TIMEOUT_MS = 2000;
 
 export async function handleStartConnect(
   deps: StartConnectDeps,
@@ -80,15 +99,61 @@ export async function handleStartConnect(
   // redemption happens later via POST /channels/connect from the Mini App.
   // This is the "Phase 2 acts as validator only" path in the architecture
   // doc Data flow §B.
-  const status = await validateConnectCode(deps.db, code);
+  //
+  // Bounded by `VALIDATE_CONNECT_CODE_TIMEOUT_MS`: pool saturation or a slow
+  // PG instance would otherwise let this handler hang up to Telegram's full
+  // ~10s /start budget; on the timeout path we surrender the validation step
+  // and surface a generic Russian reply so the user can retry. The bot
+  // handler itself must never throw — grammy's catch boundary above would
+  // log the crash, but we'd lose the user-facing reply.
+  // Tagged-object sentinel distinct from any real `validateConnectCode`
+  // resolution so we can detect a timeout WITHOUT throwing — Promise.race
+  // wins on this marker when the DB query takes too long, the marker is
+  // checked, and the handler returns a generic Russian reply. Non-timeout
+  // DB errors propagate up to bot.ts's per-/start try/catch (already wraps
+  // `handleStartConnect`) so they reach the default-reply-and-log path,
+  // distinct from this 2s surrender. We deliberately avoid rejecting the
+  // timeout promise: rejection wins the race and we'd need to disambiguate
+  // "timed out" from "DB exploded" by error-type sniffing — error-class
+  // comparisons across async boundaries are brittle.
+  type TimeoutMarker = { readonly __timeout: true };
+  const TIMEOUT_SENTINEL: TimeoutMarker = { __timeout: true };
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<TimeoutMarker>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve(TIMEOUT_SENTINEL),
+      VALIDATE_CONNECT_CODE_TIMEOUT_MS,
+    );
+  });
+  let raceResult: Awaited<ReturnType<typeof validateConnectCode>> | TimeoutMarker;
+  try {
+    raceResult = await Promise.race([
+      validateConnectCode(deps.db, code),
+      timeoutPromise,
+    ]);
+  } finally {
+    // Clear the timer regardless of which promise resolved first so the
+    // event loop isn't held open by a pending 2s timer when the DB
+    // resolved first.
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
+  if ('__timeout' in raceResult) {
+    deps.log?.warn(
+      { telegramUserId: input.telegramUserId, timeoutMs: VALIDATE_CONNECT_CODE_TIMEOUT_MS },
+      `[start-connect] validateConnectCode timed out after ${VALIDATE_CONNECT_CODE_TIMEOUT_MS}ms`,
+    );
+    await deps.reply(REPLY_COPY.timeout);
+    return;
+  }
+  const result = raceResult;
 
   // Log on the result discriminator, NOT the plaintext code (Invariant 1).
   deps.log?.info(
-    { telegramUserId: input.telegramUserId, validation: status },
+    { telegramUserId: input.telegramUserId, validation: result.status },
     'start-connect code validated',
   );
 
-  switch (status) {
+  switch (result.status) {
     case 'ok':
       await deps.reply(REPLY_COPY.ok);
       return;
@@ -98,7 +163,7 @@ export async function handleStartConnect(
     case 'consumed':
       await deps.reply(REPLY_COPY.consumed);
       return;
-    case 'not_found':
+    case 'unknown':
       await deps.reply(REPLY_COPY.unknown);
       return;
   }

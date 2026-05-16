@@ -62,6 +62,11 @@ export function sanitizeCommandError(err: CommandError): SanitizedCommandError {
  * is absent or unrecognized.
  */
 const CHANNEL_DETAILS_TABLE: Record<string, SanitizedCommandError | null> = {
+  // Raised by the route's PRE-command validateConnectCode pre-check when the
+  // code hash matches no row. Mirrors the in-command 'invalid_code' from
+  // `connectTelegramChannel` so the wire contract is identical regardless of
+  // whether the pre-check or the in-tx lookup caught the miss.
+  invalid_code: { status: 404, message: 'connect code not found' },
   expired_code: { status: 410, message: 'connect code expired; create a new one' },
   reused_code: { status: 409, message: 'connect code already used' },
   channel_taken: {
@@ -82,11 +87,21 @@ const CHANNEL_DETAILS_TABLE: Record<string, SanitizedCommandError | null> = {
   // capability surface — a future bot-driven connect endpoint would need them.
   bot_user_unknown: { status: 403, message: 'bot user not recognised' },
   bot_user_inactive: { status: 403, message: 'bot user not active' },
-  // Defense-in-depth: caller's verified workspace did not match the workspace
-  // the connect bound. Happens when an Idempotency-Key from user A is replayed
-  // by user B in a different workspace and the route's post-command check
-  // rejects the cached projection. Raised by the route AFTER the command
-  // returns; the command itself does not produce this code.
+  // PRE-command fail-fast: the verified caller's default workspace does not
+  // match the workspace the code was issued for. Returned BEFORE entering the
+  // side-effectful command so the binding is never committed in the
+  // mismatched workspace. The in-command `assertWorkspaceRole` is still the
+  // actual policy gate (raises 'forbidden' too); this code is the UX-layer
+  // marker telling the Mini App "wrong code for your workspace".
+  cross_workspace_code: {
+    status: 403,
+    message: 'connect code belongs to a different workspace',
+  },
+  // Legacy post-command defense-in-depth: previously raised by the route
+  // AFTER the command returned, when the cached projection bound a different
+  // workspace. Phase 2 sub_loop 4 moved that gate to a PRE-check
+  // (`cross_workspace_code`) so this entry stays only as a fallback for any
+  // future code path that might re-introduce a post-command mismatch.
   cross_workspace_replay: {
     status: 403,
     message: 'access denied',

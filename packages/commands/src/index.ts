@@ -49,6 +49,8 @@ export {
   hashConnectCode,
   lookupActiveCode,
   validateConnectCode,
+  type ValidateConnectCodeResult,
+  type ValidateConnectCodeStatus,
 } from './connect-code-helpers.js';
 export {
   assertWorkspaceRole,

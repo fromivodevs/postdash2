@@ -37,7 +37,7 @@
   - `src/routes/auth-telegram.ts` — Telegram auth endpoint
   - `src/routes/me.ts` — `GET /me`
   - `src/routes/projection.ts` — shared projection helpers
-  - `src/routes/error-mapping.ts` — Phase 2 `CHANNEL_DETAILS_TABLE` (expired_code / reused_code / channel_taken / bot_not_admin / missing_post_permission / chat_not_found / bot_blocked / unauthorized / cross_workspace_replay)
+  - `src/routes/error-mapping.ts` — Phase 2 `CHANNEL_DETAILS_TABLE` (invalid_code / expired_code / reused_code / channel_taken / bot_not_admin / missing_post_permission / chat_not_found / bot_blocked / unauthorized / cross_workspace_code / cross_workspace_replay)
   - `src/bot/bot.ts` — start-payload routing to `handleStartConnect`
   - `src/bot/handlers/start-connect.ts` — `/start connect_<code>` flow
   - `src/bot/__tests__/parse-start-payload.test.ts` — 7 tests

@@ -215,35 +215,42 @@ describe('POST /channels/connect', () => {
   }
 
   /**
-   * Connect-flow DB calls in order. `connectTelegramChannel` opens the
+   * Connect-flow DB calls in order. The route now runs a PRE-command
+   * `validateConnectCode` (Phase 2 sub_loop 4 Fix W1) that consumes up to two
+   * SELECTs (active+not-expired short-circuit, then a fallback any-row probe)
+   * BEFORE entering `connectTelegramChannel`. If the pre-check returns
+   * 'expired'/'consumed'/'unknown'/cross-workspace, the route fails fast and
+   * the command never runs. On the happy path the command opens the
    * idempotency slot, then inside the tx calls `lookupActiveCode` (a SELECT
    * with FOR UPDATE), then optionally `assertWorkspaceRole`, then the adapter,
    * then UPSERT content_channels, INSERT channel_connections, UPDATE the code,
    * INSERT operation_log. The fake-pool doesn't differentiate `for('update')`;
    * it just consumes the next select result.
    */
-  function baseSelectResultsForCode(codeRow: unknown): unknown[][] {
-    return [
-      [IDENTITY_ROW], // readCurrentUser: identity
-      [USER_ROW], // readCurrentUser: user
-      [MEMBER_JOIN_ROW], // readCurrentUser: workspace JOIN
-      [codeRow], // lookupActiveCode FOR UPDATE
-    ];
-  }
 
   it('410 with code=expired_code when the connect code has expired', async () => {
-    const expiredCodeRow = {
-      id: CONNECT_CODE_ID,
-      workspaceId: WORKSPACE_ID,
-      createdByUserId: USER_ID,
-      status: 'active',
-      expiresAt: new Date(Date.now() - 60_000), // 1 minute ago
-    };
     const fake = makeFakePool({
-      selectResults: baseSelectResultsForCode(expiredCodeRow),
-      // runIdempotent slot insert, then UPDATE channel_connect_codes -> expired.
-      insertResults: [[{ id: 'idem-1' }]],
-      updateResults: [[]],
+      selectResults: [
+        [IDENTITY_ROW], // readCurrentUser: identity
+        [USER_ROW], // readCurrentUser: user
+        [MEMBER_JOIN_ROW], // readCurrentUser: workspace JOIN
+        // validateConnectCode SELECT1 (active AND expires_at>now): the row
+        // is `status=active` but already past expiry, so this filter excludes
+        // it and returns no rows.
+        [],
+        // validateConnectCode SELECT2 (any row by hash): returns the expired
+        // row. The handler narrows status='active' + past-expiry -> 'expired'.
+        [
+          {
+            status: 'active',
+            expiresAt: new Date(Date.now() - 60_000),
+            workspaceId: WORKSPACE_ID,
+          },
+        ],
+      ],
+      // Command path never runs on the pre-check 'expired' branch.
+      insertResults: [],
+      updateResults: [],
     });
     const adapter = makeAdapter({
       ok: true,
@@ -275,16 +282,24 @@ describe('POST /channels/connect', () => {
   });
 
   it('409 with code=reused_code when the connect code is already consumed', async () => {
-    const consumedCodeRow = {
-      id: CONNECT_CODE_ID,
-      workspaceId: WORKSPACE_ID,
-      createdByUserId: USER_ID,
-      status: 'consumed',
-      expiresAt: new Date(Date.now() + 60_000),
-    };
     const fake = makeFakePool({
-      selectResults: baseSelectResultsForCode(consumedCodeRow),
-      insertResults: [[{ id: 'idem-1' }]],
+      selectResults: [
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW],
+        // validateConnectCode SELECT1: status='consumed' fails the active filter.
+        [],
+        // SELECT2 returns the consumed row.
+        [
+          {
+            status: 'consumed',
+            expiresAt: new Date(Date.now() + 60_000),
+            workspaceId: WORKSPACE_ID,
+          },
+        ],
+      ],
+      // Command path never runs on the pre-check 'consumed' branch.
+      insertResults: [],
       updateResults: [],
     });
     const adapter = makeAdapter({
@@ -343,7 +358,12 @@ describe('POST /channels/connect', () => {
         [IDENTITY_ROW],
         [USER_ROW],
         [MEMBER_JOIN_ROW],
-        [activeCodeRow], // lookupActiveCode
+        // validateConnectCode SELECT1 (active+not-expired): returns the row.
+        // Pre-check status='ok'; workspaceId matches caller's default ->
+        // route proceeds into the command. SELECT2 is NOT executed because
+        // SELECT1 already short-circuited inside `validateConnectCode`.
+        [{ id: CONNECT_CODE_ID, workspaceId: WORKSPACE_ID }],
+        [activeCodeRow], // lookupActiveCode (inside command)
         [ADMIN_MEMBERSHIP_ROW], // assertWorkspaceRole
       ],
       insertResults: [
@@ -422,8 +442,11 @@ describe('POST /channels/connect', () => {
         [IDENTITY_ROW],
         [USER_ROW],
         [MEMBER_JOIN_ROW],
-        [activeCodeRow],
-        [ADMIN_MEMBERSHIP_ROW],
+        // validateConnectCode SELECT1 (active+not-expired) returns the row
+        // with workspaceId matching the caller -> pre-check 'ok'.
+        [{ id: CONNECT_CODE_ID, workspaceId: WORKSPACE_ID }],
+        [activeCodeRow], // lookupActiveCode (inside command)
+        [ADMIN_MEMBERSHIP_ROW], // assertWorkspaceRole
       ],
       insertResults: [[{ id: 'idem-1' }]],
       updateResults: [],
@@ -657,69 +680,33 @@ describe('GET /channels', () => {
 });
 
 // ============================================================================
-// Cross-workspace Idempotency-Key replay (Fix A defense-in-depth)
+// Cross-workspace PRE-command guard (Phase 2 sub_loop 4 Fix W1)
 // ============================================================================
-describe('POST /channels/connect — cross-workspace replay', () => {
-  it('403 with code=cross_workspace_replay when the cached connection belongs to a different workspace', async () => {
-    // Setup: the command-layer cache returns a `channelConnection` bound to
-    // OTHER_WORKSPACE_ID, but the caller's verified `defaultWorkspace.id` is
-    // WORKSPACE_ID. The route MUST reject before sending the projection.
+describe('POST /channels/connect — cross-workspace pre-check', () => {
+  it('403 with code=cross_workspace_code when the code belongs to a different workspace (fails fast, command never runs)', async () => {
+    // Setup: the connect code was issued in OTHER_WORKSPACE_ID, but the
+    // verified caller's `defaultWorkspace.id` is WORKSPACE_ID. The route's
+    // PRE-command `validateConnectCode` reads the code's workspace and
+    // rejects BEFORE entering `connectTelegramChannel`. This avoids the old
+    // failure mode where the command would commit a binding in the OTHER
+    // workspace and only THEN have the route 403 the response (leaving a
+    // ghost binding + a misleading 409 on retry). The in-command
+    // `assertWorkspaceRole` remains the real policy gate; this code is the
+    // UX-layer marker telling the Mini App "wrong workspace".
     const OTHER_WORKSPACE_ID = '99999999-9999-9999-9999-999999999999';
-    const activeCodeRow = {
-      id: CONNECT_CODE_ID,
-      workspaceId: OTHER_WORKSPACE_ID,
-      createdByUserId: USER_ID,
-      status: 'active',
-      expiresAt: new Date(Date.now() + 60_000),
-    };
-    const upsertedChannelRow = {
-      id: CONTENT_CHANNEL_ID,
-      platform: 'telegram',
-      externalId: '-1009999999999',
-      type: 'channel',
-      title: 'Other',
-      username: 'other',
-      photoUrl: null,
-      createdAt: NOW,
-      updatedAt: NOW,
-    };
-    const insertedConnectionRow = {
-      id: CONNECTION_ID,
-      workspaceId: OTHER_WORKSPACE_ID,
-      contentChannelId: CONTENT_CHANNEL_ID,
-      status: 'connected',
-      canPostMessages: true,
-      lastVerifyStatus: 'ok',
-      lastVerifyError: null,
-      lastVerifiedAt: NOW,
-      connectedAt: NOW,
-      connectedByUserId: USER_ID,
-      createdAt: NOW,
-      updatedAt: NOW,
-    };
-    // Simulate the case where the command runs to completion against the
-    // wrong workspace (e.g. an attacker who has admin role on OTHER_WORKSPACE
-    // crafts an Idempotency-Key shared with this caller, OR a stale cached
-    // pointer that resolves to a different workspace's row). The route's
-    // post-command check must fail closed.
     const fake = makeFakePool({
       selectResults: [
         [IDENTITY_ROW],
         [USER_ROW],
         [MEMBER_JOIN_ROW], // caller defaultWorkspace = WORKSPACE_ID
-        [activeCodeRow],
-        [{ role: 'admin', status: 'active' }], // assertWorkspaceRole inside doConnect against OTHER_WORKSPACE
+        // validateConnectCode SELECT1: active code row returns with the
+        // OTHER workspace id. Pre-check 'ok' status + mismatched workspaceId
+        // -> route maps to cross_workspace_code.
+        [{ id: CONNECT_CODE_ID, workspaceId: OTHER_WORKSPACE_ID }],
       ],
-      insertResults: [
-        [{ id: 'idem-1' }], // runIdempotent slot
-        [upsertedChannelRow], // upsert content_channels
-        [insertedConnectionRow], // insert channel_connections
-        [], // operation_log
-      ],
-      updateResults: [
-        [], // consume code
-        [{ id: 'idem-1' }], // runIdempotent: mark success
-      ],
+      // Adapter + command path are NEVER reached.
+      insertResults: [],
+      updateResults: [],
     });
     const adapter = makeAdapter({
       ok: true,
@@ -745,13 +732,214 @@ describe('POST /channels/connect — cross-workspace replay', () => {
           user: JSON.stringify({ id: TG_USER_ID, first_name: 'Alice' }),
           auth_date: String(freshAuthDate()),
         }),
-        'idempotency-key': 'leaked-key-1',
+        'idempotency-key': 'wrong-workspace-key',
         'content-type': 'application/json',
       },
-      payload: { code: 'LEAKED12', external_chat_id: '@otherchan' },
+      payload: { code: 'OTHERWS1', external_chat_id: '@otherchan' },
     });
     expect(res.statusCode).toBe(403);
     const body = res.json() as Record<string, unknown>;
-    expect(body['code']).toBe('cross_workspace_replay');
+    expect(body['code']).toBe('cross_workspace_code');
+    // Adapter must NEVER be invoked when the pre-check fails.
+    expect(adapter.verifyConnection).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Idempotency-Key + body-mismatch guard (Phase 2 sub_loop 4 Fix W3)
+// ============================================================================
+describe('POST /channels/connect — Idempotency-Key + body-mismatch', () => {
+  it('two POSTs with same Idempotency-Key but different code each execute independently (no cache hit)', async () => {
+    // Without the body-hash composition in the effective idempotency key
+    // (header + ":" + sha256(body)), a second POST that reused the header
+    // with a DIFFERENT code/external_chat_id would short-circuit on the
+    // command-layer cache and return the FIRST call's projection. The Mini
+    // App would then display a confirmation for a binding the caller never
+    // submitted. This test drives two full /channels/connect flows back to
+    // back with the SAME header and DIFFERENT bodies, and asserts BOTH
+    // adapters were called -- proving cache wasn't hit on the second call.
+    const activeCodeRowA = {
+      id: CONNECT_CODE_ID,
+      workspaceId: WORKSPACE_ID,
+      createdByUserId: USER_ID,
+      status: 'active',
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const upsertedChannelA = {
+      id: CONTENT_CHANNEL_ID,
+      platform: 'telegram',
+      externalId: '-1001111111111',
+      type: 'channel',
+      title: 'A',
+      username: 'a',
+      photoUrl: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const insertedConnectionA = {
+      id: CONNECTION_ID,
+      workspaceId: WORKSPACE_ID,
+      contentChannelId: CONTENT_CHANNEL_ID,
+      status: 'connected',
+      canPostMessages: true,
+      lastVerifyStatus: 'ok',
+      lastVerifyError: null,
+      lastVerifiedAt: NOW,
+      connectedAt: NOW,
+      connectedByUserId: USER_ID,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    const SECOND_CODE_ID = '77777777-7777-7777-7777-777777777777';
+    const SECOND_CHANNEL_ID = '88888888-8888-8888-8888-888888888888';
+    const SECOND_CONNECTION_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    const activeCodeRowB = {
+      id: SECOND_CODE_ID,
+      workspaceId: WORKSPACE_ID,
+      createdByUserId: USER_ID,
+      status: 'active',
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const upsertedChannelB = {
+      id: SECOND_CHANNEL_ID,
+      platform: 'telegram',
+      externalId: '-1002222222222',
+      type: 'channel',
+      title: 'B',
+      username: 'b',
+      photoUrl: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const insertedConnectionB = {
+      id: SECOND_CONNECTION_ID,
+      workspaceId: WORKSPACE_ID,
+      contentChannelId: SECOND_CHANNEL_ID,
+      status: 'connected',
+      canPostMessages: true,
+      lastVerifyStatus: 'ok',
+      lastVerifyError: null,
+      lastVerifiedAt: NOW,
+      connectedAt: NOW,
+      connectedByUserId: USER_ID,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+
+    const fake = makeFakePool({
+      selectResults: [
+        // ---- Request A ----
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW],
+        // validateConnectCode SELECT1 for code A
+        [{ id: CONNECT_CODE_ID, workspaceId: WORKSPACE_ID }],
+        [activeCodeRowA], // lookupActiveCode (inside command)
+        [ADMIN_MEMBERSHIP_ROW], // assertWorkspaceRole
+        // ---- Request B ----
+        [IDENTITY_ROW],
+        [USER_ROW],
+        [MEMBER_JOIN_ROW],
+        [{ id: SECOND_CODE_ID, workspaceId: WORKSPACE_ID }],
+        [activeCodeRowB],
+        [ADMIN_MEMBERSHIP_ROW],
+      ],
+      insertResults: [
+        // ---- Request A inserts ----
+        [{ id: 'idem-A' }], // runIdempotent slot
+        [upsertedChannelA], // UPSERT content_channels
+        [insertedConnectionA], // INSERT channel_connections
+        [], // operation_log
+        // ---- Request B inserts ----
+        // Different effective idempotency key (header + sha256(body)) -> the
+        // runIdempotent INSERT slot succeeds again rather than colliding.
+        [{ id: 'idem-B' }],
+        [upsertedChannelB],
+        [insertedConnectionB],
+        [],
+      ],
+      updateResults: [
+        // ---- Request A updates ----
+        [], // consume code
+        [{ id: 'idem-A' }], // runIdempotent: mark success
+        // ---- Request B updates ----
+        [],
+        [{ id: 'idem-B' }],
+      ],
+    });
+
+    // Two adapter responses; each call returns the matching projection so we
+    // can assert both calls happened.
+    let adapterCalls = 0;
+    const adapter: TelegramChannelAdapter = {
+      verifyConnection: vi.fn(async (): Promise<VerifyConnectionResult> => {
+        adapterCalls += 1;
+        if (adapterCalls === 1) {
+          return {
+            ok: true,
+            externalId: '-1001111111111',
+            title: 'A',
+            username: 'a',
+            photoUrl: null,
+            chatType: 'channel',
+            canPostMessages: true,
+          };
+        }
+        return {
+          ok: true,
+          externalId: '-1002222222222',
+          title: 'B',
+          username: 'b',
+          photoUrl: null,
+          chatType: 'channel',
+          canPostMessages: true,
+        };
+      }),
+    };
+
+    app = await buildApp(
+      withTestEnv({
+        TELEGRAM_BOT_TOKEN: BOT_TOKEN,
+        TELEGRAM_BOT_USERNAME: BOT_USERNAME,
+      }),
+      { pool: fake.pool, channelAdapter: adapter },
+    );
+
+    const sharedHeaders = {
+      authorization: signedHeader({
+        user: JSON.stringify({ id: TG_USER_ID, first_name: 'Alice' }),
+        auth_date: String(freshAuthDate()),
+      }),
+      'idempotency-key': 'shared-header-key',
+      'content-type': 'application/json',
+    };
+
+    const resA = await app.inject({
+      method: 'POST',
+      url: '/channels/connect',
+      headers: sharedHeaders,
+      payload: { code: 'BODYHAS1', external_chat_id: '@chanA' },
+    });
+    expect(resA.statusCode).toBe(200);
+    const bodyA = resA.json() as Record<string, unknown>;
+    expect(bodyA['id']).toBe(CONNECTION_ID);
+
+    const resB = await app.inject({
+      method: 'POST',
+      url: '/channels/connect',
+      headers: sharedHeaders,
+      payload: { code: 'BODYHAS2', external_chat_id: '@chanB' },
+    });
+    expect(resB.statusCode).toBe(200);
+    const bodyB = resB.json() as Record<string, unknown>;
+    // CRITICAL: if the cache had been hit (old behavior), resB would echo
+    // CONNECTION_ID from request A. The body-hash composition forces a fresh
+    // execute, so resB returns the second connection.
+    expect(bodyB['id']).toBe(SECOND_CONNECTION_ID);
+    expect(bodyB['id']).not.toBe(bodyA['id']);
+
+    // Both adapter calls happened: the second was NOT served from the cache.
+    expect(adapter.verifyConnection).toHaveBeenCalledTimes(2);
   });
 });

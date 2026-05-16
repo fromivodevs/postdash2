@@ -91,7 +91,13 @@ export interface TelegramChannelAdapter {
 }
 
 export const ConnectTelegramChannelInputSchema = z.object({
-  idempotencyKey: z.string().min(1).max(200),
+  // Cap 300 chars: the route composes `${headerIdempotencyKey}:${sha256Hex}`
+  // where the header itself is capped at 200 and the sha256 hex digest is 64
+  // (plus a `:` separator → 265 worst case). 300 leaves room for that
+  // composition without artificially tightening the per-header cap on the
+  // route side. See architecture/channel-connection.md Decision: "body-hash
+  // suffix on idempotency key" (Phase 2 sub_loop 4 Fix W3).
+  idempotencyKey: z.string().min(1).max(300),
   code: z.string().min(6).max(20),
   externalChatId: z.string().min(1).max(MAX_EXTERNAL_CHAT_ID_LEN),
   invokedBy: z.union([

@@ -23,6 +23,7 @@
  * `sanitizeCommandError` table.
  */
 
+import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -37,6 +38,7 @@ import {
   connectTelegramChannel,
   createConnectCode,
   readCurrentUser,
+  validateConnectCode,
   type TelegramChannelAdapter,
 } from '@postdash/commands';
 import {
@@ -212,34 +214,77 @@ export async function channelsRoute(
       const body = bodyParse.data;
 
       try {
+        // PRE-command UX guard: validate the code's existence + workspace
+        // ownership BEFORE entering the side-effectful `connectTelegramChannel`
+        // command. The command itself enforces the same constraints
+        // transactionally (via `lookupActiveCode` + `assertWorkspaceRole`),
+        // but its workspace gate is on the CODE's workspace, not the caller's
+        // verified default workspace — meaning a multi-workspace admin
+        // submitting workspace B's code while their default is A would
+        // successfully commit the binding in B, only to have the route's
+        // post-command check 403 the response. The user sees an error while
+        // the binding silently succeeded; a retry then 409s on `channel_taken`.
+        // Pre-checking turns that into a clean fail-fast 403 with no side
+        // effect. We KEEP the in-command `assertWorkspaceRole` (it's the real
+        // policy gate); this is a UX layer, not a security boundary.
+        const validation = await validateConnectCode(app.pool.db, body.code);
+        if (validation.status === 'unknown') {
+          throw new CommandError(
+            'not_found',
+            'unknown code',
+            { code: 'invalid_code' },
+          );
+        }
+        if (validation.status === 'expired') {
+          throw new CommandError(
+            'not_found',
+            'code expired',
+            { code: 'expired_code' },
+          );
+        }
+        if (validation.status === 'consumed') {
+          throw new CommandError(
+            'conflict',
+            'code already used',
+            { code: 'reused_code' },
+          );
+        }
+        if (validation.workspaceId !== currentUser.defaultWorkspace.id) {
+          throw new CommandError(
+            'forbidden',
+            'code belongs to a different workspace',
+            { code: 'cross_workspace_code' },
+          );
+        }
+
+        // Effective idempotency key includes a sha256 of the canonical body
+        // so that the same Idempotency-Key submitted with DIFFERENT bodies
+        // does NOT return a cached projection from the first call. Without
+        // this, a client that reused a key by mistake (or a leak) with new
+        // `code`/`external_chat_id` would receive a confirmation describing
+        // a binding the caller never asked for. Same body + same header still
+        // collides (intended dedup); different body forces a fresh execute.
+        const bodyHash = createHash('sha256')
+          .update(
+            JSON.stringify({
+              code: body.code,
+              external_chat_id: body.external_chat_id,
+            }),
+            'utf8',
+          )
+          .digest('hex');
+        const effectiveIdempotencyKey = `${idempotencyKey}:${bodyHash}`;
+
         const { result } = await connectTelegramChannel(
           app.pool.db,
           channelAdapter,
           {
-            idempotencyKey,
+            idempotencyKey: effectiveIdempotencyKey,
             code: body.code,
             externalChatId: body.external_chat_id,
             invokedBy: { source: 'miniapp', userId: currentUser.user.id },
           },
         );
-
-        // Defense-in-depth against cross-caller Idempotency-Key replay.
-        // `runIdempotent` keys solely on `(commandType, idempotencyKey)` and
-        // `loadFromPointer` re-reads the cached channel_connection row WITHOUT
-        // re-checking the caller's workspace. If user A's Idempotency-Key
-        // leaks (browser HAR / devtools), user B in a DIFFERENT workspace
-        // could replay it with their own verified initData and otherwise
-        // receive A's channel projection. We reject any response whose
-        // workspace does not match the verified caller's workspace here,
-        // BEFORE projecting + sending. The actual fix-out-of-leak is on the
-        // caller (rotate the key), but we never leak the cross-workspace row.
-        if (result.channelConnection.workspaceId !== currentUser.defaultWorkspace.id) {
-          throw new CommandError(
-            'forbidden',
-            'cross-workspace idempotency-key replay denied',
-            { code: 'cross_workspace_replay' },
-          );
-        }
 
         const projection = projectChannel({
           connection: result.channelConnection,
