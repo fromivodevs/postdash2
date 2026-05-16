@@ -10,6 +10,16 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0',
     open: '/',
+    // Allow tunneled hosts in dev (cloudflared / ngrok / vscode dev tunnels).
+    // Vite 5+ blocks unknown Host headers by default as DNS-rebinding protection.
+    // Dev-only; production build is served by a real host with its own headers.
+    allowedHosts: [
+      '.trycloudflare.com',
+      '.ngrok-free.app',
+      '.ngrok.io',
+      '.devtunnels.ms',
+      'localhost',
+    ],
   },
   build: {
     target: 'es2022',
