@@ -129,16 +129,17 @@ The app runtime database is always Postgres-compatible. Do not replace it with
 SQLite, in-memory storage, a document DB, or a vector-only database for product
 code.
 
-- Local development and phase validation default to ordinary local Postgres via
-  `docker compose up -d postgres` (`pgvector/pgvector:pg16`).
-- Shared preview, staging, and production default to Neon Postgres. Neon is the
-  preferred remote provider because it is managed Postgres, supports pgvector,
-  and has database branching that can mirror Git phase or preview branches.
+**Provider: Neon Postgres everywhere** (dev, phase validation, staging, prod).
+Authoritative policy: `architecture/database.md`. No Docker / Supabase / RDS —
+single provider eliminates drift between laptops and shared environments.
+
 - Phase branches must not share one persistent remote database by accident. If
-  a `phase/N-*` branch needs remote testing, use a matching Neon branch/database
-  or an explicitly disposable database.
-- Neon branch names should mirror Git branch intent, for example
+  a `phase/N-*` branch needs DB-backed testing, create a matching Neon branch
+  (`phase-N-<slug>`) and use its direct connection string.
+- Neon branch names mirror Git branch intent, for example
   `phase-1-identity` and `phase-2-channel-connection`.
+- Direct (not pooled) connection string is required for migrations and Drizzle
+  — PgBouncer breaks the transactions + advisory locks the migrator relies on.
 - Never run migrations from different phases against the same long-lived remote
   DB unless the intent is to upgrade that DB forward.
 - `DATABASE_URL` is environment-specific secret config. Do not commit real cloud

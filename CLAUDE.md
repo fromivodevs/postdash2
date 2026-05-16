@@ -71,3 +71,4 @@ PostDash / Content Radar — Telegram-first MVP AI-радара инфопово
 - Telegram — это adapter, а не core. Core: `content_channel`, `workspace`, `source`, `news_item`, `post_draft`, `publish_target`.
 - Source-centric ingestion: fetch один раз глобально, matching/scoring/drafts — per workspace.
 - Все мутации через command layer + policy checks. AI rewrite = новая draft version. OperationLog обязателен.
+- **Database provider: Neon Postgres ВЕЗДЕ** (dev, validation, staging, prod). Никакого Docker / Supabase / RDS. Authoritative policy → `architecture/database.md`. Если видишь упоминание `localhost:5432` или `docker compose up postgres` в инструкции — это drift, починить ссылкой на Neon.

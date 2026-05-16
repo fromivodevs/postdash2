@@ -42,7 +42,12 @@ function Add-Command-Check {
         $output = & $Command 2>&1
         $exitCode = $LASTEXITCODE
         $text = ($output | Out-String).Trim()
-        $text = $text -replace '(?m)^warning:.*LF will be replaced by CRLF.*(\r?\n)?', ''
+        $text = $text -replace "(?s)warning: in the working copy of .*?LF will be replaced by CRLF the next time Git touches it\r?\n?", ''
+        if ($Name -eq 'git diff --check' -and $exitCode -eq 0) { $text = '' }
+        if ($Name -eq 'git diff --check' -and $text -match 'LF will be replaced by CRLF' -and $text -notmatch '(trailing whitespace|space before tab|new blank line)') {
+            $exitCode = 0
+            $text = ''
+        }
         if ($exitCode -ne 0) {
             $script:results += Add-Result $Name 'FAIL' ("exit code ${exitCode}: $text")
         } elseif ($text -match '(?i)\b(warning|error|failed|fatal|parsererror|exception)\b') {
@@ -285,6 +290,20 @@ Test-Skill-Frontmatter (Join-Path $codexDir 'skills') 'codex skills'
 $projectRulesPath = Join-Path $projectRoot 'PROJECT_RULES.md'
 if (Test-Path $projectRulesPath) {
     $results += Add-Result 'PROJECT_RULES.md' 'OK' 'present'
+    $projectRulesText = Get-Content -LiteralPath $projectRulesPath -Raw -Encoding UTF8
+    $requiredProjectRuleSections = @(
+        '## Rule Placement',
+        '## Project Rules Merge Policy',
+        '## Startup Entry',
+        '## Stage Closure',
+        '## Validation Evidence'
+    )
+    $missingProjectRuleSections = @($requiredProjectRuleSections | Where-Object { $projectRulesText -notlike "*$_*" })
+    if ($missingProjectRuleSections.Count -gt 0) {
+        $results += Add-Result 'PROJECT_RULES.md required sections' 'FAIL' ($missingProjectRuleSections -join ', ')
+    } else {
+        $results += Add-Result 'PROJECT_RULES.md required sections' 'OK' 'all generic sections present'
+    }
 } else {
     $results += Add-Result 'PROJECT_RULES.md' 'FAIL' 'missing shared project rules file'
 }
@@ -372,7 +391,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
     $gitDirOutput = & git -C $projectRoot rev-parse --is-inside-work-tree 2>&1
     if ($LASTEXITCODE -eq 0 -and (($gitDirOutput | Out-String).Trim()) -eq 'true') {
         Add-Command-Check 'git diff --check' {
-            git -c core.autocrlf=false -C $projectRoot diff --check -- .claude .codex kit AGENTS.md CLAUDE.md PROJECT_RULES.md
+            git -c core.autocrlf=false -C $projectRoot diff --check -- .claude .codex kit AGENTS.md CLAUDE.md PROJECT_RULES.md 2>$null
         }
     }
 }

@@ -20,8 +20,7 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck",
     "db:migrate": "pnpm --filter @postdash/db migrate",
-    "db:generate": "pnpm --filter @postdash/db generate",
-    "db:up": "docker compose up -d postgres"
+    "db:generate": "pnpm --filter @postdash/db generate"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

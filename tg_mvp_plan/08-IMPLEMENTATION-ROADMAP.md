@@ -57,16 +57,16 @@ All phases use Postgres-compatible storage. pgvector lives inside Postgres; do
 not introduce SQLite, in-memory persistence, document DB storage, or a vector
 database as the product database.
 
-- Local dev and phase validation: ordinary Docker Postgres via
-  `docker compose up -d postgres`.
-- Shared preview/staging/prod: Neon Postgres by default, because its database
-  branches can mirror Git phase branches and preview branches.
-- Phase-specific remote checks must use a matching Neon branch/database or a
-  disposable DB. Do not run migrations from multiple phase branches against one
-  long-lived remote DB unless intentionally upgrading it forward.
-- Supabase is allowed when we need Supabase Auth, Storage, Realtime, or its
-  dashboard. Render/Railway are allowed for simple hosting. Native Windows
-  Postgres is allowed but Docker remains the default local path.
+**Provider: Neon Postgres everywhere** — dev, phase validation, staging, prod.
+Authoritative policy: `architecture/database.md`. No Docker / Supabase / RDS.
+
+- Working on `phase/N-<slug>` Git branch? Create a matching Neon branch and use
+  its connection string. Phase-data isolation in one click.
+- Phase branches must not share one persistent remote database by accident.
+- Direct connection string for migrations (not pooled — PgBouncer breaks
+  transactions + advisory locks). `?sslmode=require` always.
+- Cold-start tax (~5–15s on free tier) is expected and tolerated by
+  `waitForDb` in the migrator.
 - Use `pnpm db:migrate` as the schema source of truth. For Neon migrations,
   prefer the direct connection string; introduce a separate runtime pool URL
   only when the app has code-level support for it.

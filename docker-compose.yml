@@ -1,3 +1,16 @@
+# =============================================================================
+# DEPRECATED — do not use for development or phase validation.
+# =============================================================================
+# Project DB policy (authoritative): architecture/database.md
+# Decision: Neon Postgres EVERYWHERE (dev, validation, staging, prod).
+#
+# This file is kept only for historical reference from Phase 0 scaffolding.
+# Pointing DATABASE_URL at this local container creates data drift between
+# laptops and breaks the "one Neon branch per phase Git branch" workflow.
+#
+# To set up a database: see README.md "Database policy" or architecture/database.md.
+# =============================================================================
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
