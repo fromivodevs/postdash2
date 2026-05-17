@@ -53,3 +53,37 @@ export {
   type ValidateConnectCodeStatus,
 } from './connect-code-helpers.js';
 export { assertWorkspaceRole, ROLE_RANK, type WorkspaceMinRole } from './policies.js';
+
+// Phase 3: topics + sources.
+export {
+  createTopicProfile,
+  updateTopicProfile,
+  deleteTopicProfile,
+  listTopicProfiles,
+  CreateTopicProfileInputSchema,
+  UpdateTopicProfileInputSchema,
+  DeleteTopicProfileInputSchema,
+  ListTopicProfilesInputSchema,
+  type CreateTopicProfileInput,
+  type UpdateTopicProfileInput,
+  type DeleteTopicProfileInput,
+  type ListTopicProfilesInput,
+} from './topic-profiles.js';
+export {
+  createSource,
+  updateSourceSubscription,
+  deleteSourceSubscription,
+  listSources,
+  CreateSourceInputSchema,
+  UpdateSourceSubscriptionInputSchema,
+  DeleteSourceSubscriptionInputSchema,
+  ListSourcesInputSchema,
+  type CreateSourceInput,
+  type UpdateSourceSubscriptionInput,
+  type DeleteSourceSubscriptionInput,
+  type ListSourcesInput,
+  type CreateSourceResult,
+  type ListSourcesResultItem,
+  type ResolveRedirectFn,
+} from './sources.js';
+export { rowToTopicProfile, rowToSource, rowToSubscription } from './topic-row-mappers.js';

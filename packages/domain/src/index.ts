@@ -11,3 +11,5 @@
 
 export * from './identity.js';
 export * from './channel.js';
+export * from './topic.js';
+export * from './source.js';

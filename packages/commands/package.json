@@ -13,6 +13,7 @@
   "dependencies": {
     "@postdash/db": "workspace:*",
     "@postdash/domain": "workspace:*",
+    "@postdash/sources": "workspace:*",
     "drizzle-orm": "^0.38.4",
     "zod": "^3.24.1"
   },

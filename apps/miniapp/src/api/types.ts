@@ -17,3 +17,10 @@ export type {
   ChannelListProjection,
   ConnectCodeProjection,
 } from '@postdash/shared';
+export type {
+  TopicProfileProjection,
+  TopicProfileListProjection,
+  SourceProjection,
+  SourceSubscriptionProjection,
+  SourceSubscriptionListProjection,
+} from '@postdash/shared';

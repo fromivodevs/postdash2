@@ -20,3 +20,15 @@ export {
   type ChannelListProjection,
   type ConnectCodeProjection,
 } from './channel-projection.js';
+export {
+  TopicProfileProjectionSchema,
+  TopicProfileListProjectionSchema,
+  SourceProjectionSchema,
+  SourceSubscriptionProjectionSchema,
+  SourceSubscriptionListProjectionSchema,
+  type TopicProfileProjection,
+  type TopicProfileListProjection,
+  type SourceProjection,
+  type SourceSubscriptionProjection,
+  type SourceSubscriptionListProjection,
+} from './topic-source-projection.js';

@@ -17,13 +17,16 @@ import {
   boolean,
   check,
   index,
+  integer,
   jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { vector } from 'drizzle-orm/pg-core';
 
 // CHECK constraints over bare `text` columns (preferred over pg enums for
 // migration flexibility — adding a value is a no-op constraint swap, not an
@@ -318,6 +321,130 @@ export const channelConnectCodes = pgTable(
   ],
 );
 
+// =============================================================================
+// Phase 3: topics + sources + workspace_source_subscriptions.
+// See architecture/topics-and-sources.md. Mirrors 0003_phase3.sql exactly —
+// schema.ts <-> migration parity is non-negotiable.
+// =============================================================================
+
+export const topicProfiles = pgTable(
+  'topic_profiles',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    language: text('language').notNull(),
+    mainTopics: text('main_topics').array().notNull().default(sql`'{}'::text[]`),
+    keywords: text('keywords').array().notNull().default(sql`'{}'::text[]`),
+    negativeKeywords: text('negative_keywords').array().notNull().default(sql`'{}'::text[]`),
+    toneProfile: jsonb('tone_profile'),
+    // pgvector(256) — Yandex text-search-doc output dim.
+    // NULL until Phase 4 recompute_topic_embedding task fills it.
+    embedding: vector('embedding', { dimensions: 256 }),
+    embeddingStatus: text('embedding_status').notNull().default('pending'),
+    embeddingUpdatedAt: timestamp('embedding_updated_at', { withTimezone: true, mode: 'date' }),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('topic_profiles_language_check', sql`${t.language} IN ('ru', 'en')`),
+    check(
+      'topic_profiles_embedding_status_check',
+      sql`${t.embeddingStatus} IN ('pending', 'ok', 'failed')`,
+    ),
+    check('topic_profiles_status_check', sql`${t.status} IN ('active', 'disabled')`),
+    index('topic_profiles_workspace_idx').on(t.workspaceId, t.status),
+  ],
+);
+
+export const sources = pgTable(
+  'sources',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    type: text('type').notNull(),
+    url: text('url').notNull(),
+    canonicalUrl: text('canonical_url').notNull(),
+    name: text('name'),
+    fetchIntervalMinutes: integer('fetch_interval_minutes').notNull().default(60),
+    maxItemsPerFetch: integer('max_items_per_fetch').notNull().default(50),
+    reliabilityScore: numeric('reliability_score'),
+    lastFetchedAt: timestamp('last_fetched_at', { withTimezone: true, mode: 'date' }),
+    lastFetchStatus: text('last_fetch_status'),
+    lastFetchError: text('last_fetch_error'),
+    canonicalizationRuleVersion: text('canonicalization_rule_version').notNull(),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('sources_type_check', sql`${t.type} IN ('rss', 'website', 'api', 'manual')`),
+    check('sources_status_check', sql`${t.status} IN ('active', 'disabled', 'error')`),
+    check(
+      'sources_last_fetch_status_check',
+      sql`${t.lastFetchStatus} IS NULL OR ${t.lastFetchStatus} IN (
+        'ok', '4xx', '5xx', 'parse_error', 'timeout'
+      )`,
+    ),
+    // Same length cap as channel_connections.last_verify_error: short label,
+    // never a stack trace. Mirrors sources_last_fetch_error_length_check in
+    // 0003_phase3.sql.
+    check(
+      'sources_last_fetch_error_length_check',
+      sql`${t.lastFetchError} IS NULL OR length(${t.lastFetchError}) <= 200`,
+    ),
+    check('sources_fetch_interval_minutes_check', sql`${t.fetchIntervalMinutes} > 0`),
+    check('sources_max_items_per_fetch_check', sql`${t.maxItemsPerFetch} > 0`),
+    unique('sources_canonical_url_unique').on(t.canonicalUrl),
+    index('sources_status_last_fetched_at_idx').on(t.status, t.lastFetchedAt),
+  ],
+);
+
+export const workspaceSourceSubscriptions = pgTable(
+  'workspace_source_subscriptions',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => sources.id, { onDelete: 'restrict' }),
+    topicProfileId: uuid('topic_profile_id').references(() => topicProfiles.id, {
+      onDelete: 'set null',
+    }),
+    enabled: boolean('enabled').notNull().default(true),
+    priority: integer('priority').notNull().default(50),
+    customRules: jsonb('custom_rules').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    // UNIQUE includes topic_profile_id so multi-profile per (workspace, source)
+    // works in Phase 5+. MVP single-profile UX upserts on (workspace, source)
+    // WHERE topic_profile_id IS NULL in the application layer.
+    unique('workspace_source_subscriptions_unique').on(
+      t.workspaceId,
+      t.sourceId,
+      t.topicProfileId,
+    ),
+    check(
+      'workspace_source_subscriptions_priority_check',
+      sql`${t.priority} >= 0 AND ${t.priority} <= 100`,
+    ),
+    index('workspace_source_subscriptions_source_idx').on(t.sourceId, t.enabled),
+    index('workspace_source_subscriptions_workspace_idx').on(t.workspaceId, t.enabled),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
@@ -336,3 +463,9 @@ export type ChannelConnectionRow = typeof channelConnections.$inferSelect;
 export type NewChannelConnectionRow = typeof channelConnections.$inferInsert;
 export type ChannelConnectCodeRow = typeof channelConnectCodes.$inferSelect;
 export type NewChannelConnectCodeRow = typeof channelConnectCodes.$inferInsert;
+export type TopicProfileRow = typeof topicProfiles.$inferSelect;
+export type NewTopicProfileRow = typeof topicProfiles.$inferInsert;
+export type SourceRow = typeof sources.$inferSelect;
+export type NewSourceRow = typeof sources.$inferInsert;
+export type WorkspaceSourceSubscriptionRow = typeof workspaceSourceSubscriptions.$inferSelect;
+export type NewWorkspaceSourceSubscriptionRow = typeof workspaceSourceSubscriptions.$inferInsert;

@@ -11,7 +11,9 @@ import { channelsRoute } from './routes/channels.js';
 import { healthRoutes } from './routes/health.js';
 import { meRoute } from './routes/me.js';
 import { readyRoutes } from './routes/ready.js';
+import { sourcesRoute } from './routes/sources.js';
 import { telegramWebhookRoute } from './routes/telegram-webhook.js';
+import { topicsRoute } from './routes/topics.js';
 import type { ApiEnv } from './env.js';
 
 declare module 'fastify' {
@@ -189,6 +191,17 @@ export async function buildApp(
     initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
     botUsername: env.TELEGRAM_BOT_USERNAME,
     channelAdapter: deps.channelAdapter,
+  });
+  // Topics + sources routes (Phase 3). Same self-503 contract: bot token /
+  // pool absence triggers 503 inside preflight rather than blowing up plugin
+  // registration.
+  await app.register(topicsRoute, {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
+  });
+  await app.register(sourcesRoute, {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
   });
 
   if (deps.bot) {

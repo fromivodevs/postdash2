@@ -69,9 +69,12 @@ export function makeMockDb(script: MockDbScript = {}): MockDb {
       'set',
       'values',
       'onConflictDoNothing',
+      'onConflictDoUpdate',
       'innerJoin',
+      'leftJoin',
       'orderBy',
       'limit',
+      'for',
     ];
     for (const m of passthrough) proxy[m] = () => proxy;
     proxy['returning'] = async () => resolveRows();
