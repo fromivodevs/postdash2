@@ -178,7 +178,7 @@ From `tg_mvp_plan/12-EDGE-CASES.md §15` Phase 3:
 
 ## Status
 
-Active. Validated through `/step-perfect-loop with full 5x5 depth` (3 main loops, 2 fix rounds). Closure tags: `phase-3-perfect` (initial), `phase-3-perfect-r2` (after hardening). Final MIN score across the lean core + specialists: **8 (GOOD)**; remaining gaps are documented Phase 3.5 polish (DELETE-confirm modal, Skeleton, closingConfirmation, FOR SHARE race fix all landed in the second loop commit; residual: prefers-reduced-motion CSS, §15 platform QA evidence).
+Active. Validated through two `/step-perfect-loop with full 5x5 depth` runs (4 main loops total, 4 fix-commit rounds). Closure tags: `phase-3-perfect` (initial), `phase-3-perfect-r2` (after round-1/2 hardening), `phase-3-perfect-r3` (after round-3/4 polish). Final MIN score: **8–9 (GOOD)**; `pl-breaker` reached **10** in round 4 ("exhausted realistic attack surface"). Only remaining gaps: §15 manual cross-platform QA (unreachable from automated review) and DNS rebinding for Phase 4 consume-side.
 
 ## Last touched
 
