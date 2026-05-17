@@ -104,6 +104,13 @@ function defaultPriorityFor(type: TaskType): number {
       return 50;
     case 'refresh_iam_token':
       return 95;
+    // Phase 5: per §7 of tg_mvp_plan/06-WORKERS-AND-INGESTION.md.
+    case 'match_news_to_workspaces':
+      return 50;
+    case 'score_workspace_match':
+      return 55;
+    case 'recompute_topic_embedding':
+      return 70;
   }
 }
 

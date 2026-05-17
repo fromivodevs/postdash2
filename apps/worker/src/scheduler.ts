@@ -160,10 +160,24 @@ export class Scheduler {
 
   /**
    * Enqueue housekeeping tasks. Exposed for tests.
+   *
+   * Phase 5 addition: scans `topic_profiles WHERE embedding_status='pending'
+   * AND status='active'` and enqueues `recompute_topic_embedding` for each.
+   * The commands layer flips `embedding_status='pending'` on content edit
+   * (see createTopicProfile / updateTopicProfile); this scheduler hop avoids
+   * a `@postdash/commands → @postdash/tasks` dependency (which would weaken
+   * the command-layer's "no infra" rule). Self-healing: a permanent
+   * recompute failure leaves embedding_status='pending' and the next tick
+   * re-enqueues.
    */
-  async slowTick(): Promise<{ janitorEnqueued: boolean; iamRefreshEnqueued: boolean }> {
+  async slowTick(): Promise<{
+    janitorEnqueued: boolean;
+    iamRefreshEnqueued: boolean;
+    recomputeEnqueued: number;
+  }> {
     let janitorEnqueued = false;
     let iamRefreshEnqueued = false;
+    let recomputeEnqueued = 0;
     try {
       const j = await enqueueTask(this.opts.db, { type: 'janitor_release_stuck_tasks' });
       janitorEnqueued = j.created;
@@ -181,15 +195,44 @@ export class Scheduler {
         const r = await enqueueTask(this.opts.db, { type: 'refresh_iam_token' });
         iamRefreshEnqueued = r.created;
       }
+
+      // Phase 5: enqueue recompute_topic_embedding for active topic_profiles
+      // whose embedding_status='pending'. The partial UNIQUE
+      // `tasks_unique_active_recompute_per_topic` collapses repeat enqueues
+      // (one in-flight task per topic) — burst PATCHes by the same workspace
+      // produce one recompute task, not N.
+      //
+      // Single-statement bulk enqueue. LIMIT 200 caps the per-tick batch so
+      // a backfill (e.g. ops-driven NULL-out for re-embedding) cannot stall
+      // a tick with thousands of inserts; the next tick (5 min later)
+      // picks up the remainder.
+      const inserted = (await this.opts.db.execute(sql`
+        WITH due AS (
+          SELECT id FROM topic_profiles
+          WHERE status = 'active'
+            AND embedding_status = 'pending'
+          LIMIT 200
+        )
+        INSERT INTO tasks (type, priority, payload, status, scheduled_at)
+        SELECT 'recompute_topic_embedding', 70,
+               jsonb_build_object('topic_profile_id', id::text), 'pending', now()
+        FROM due
+        ON CONFLICT ((payload->>'topic_profile_id'))
+          WHERE type = 'recompute_topic_embedding' AND status IN ('pending', 'running')
+        DO NOTHING
+        RETURNING id
+      `)) as Array<{ id: string }>;
+      recomputeEnqueued = inserted.length;
+
       // Same heartbeat pattern as fastTick — single log line per tick so ops
       // can confirm the slow scheduler is alive without a /health endpoint.
       this.opts.logger.info(
-        { janitorEnqueued, iamRefreshEnqueued, tick: 'slow' },
+        { janitorEnqueued, iamRefreshEnqueued, recomputeEnqueued, tick: 'slow' },
         'scheduler slowTick complete',
       );
     } catch (err) {
       this.opts.logger.error({ err }, 'scheduler slowTick failed');
     }
-    return { janitorEnqueued, iamRefreshEnqueued };
+    return { janitorEnqueued, iamRefreshEnqueued, recomputeEnqueued };
   }
 }

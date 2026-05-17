@@ -1,11 +1,15 @@
 import { z } from 'zod';
 
 /**
- * Exhaustive list of task types implemented in Phase 4. The DB CHECK
- * constraint in 0005_phase4.sql mirrors this set — `tasks_type_check` MUST
- * stay in lockstep. Adding a new type requires (1) a new constant here, (2)
- * an ALTER TABLE migration extending the CHECK, (3) a handler in
- * `apps/worker/src/handlers/*`, (4) registration in `apps/worker/loop.ts`.
+ * Exhaustive list of task types. The DB CHECK constraint in
+ * 0005_phase4.sql (extended by 0008_phase5_matching_scoring.sql) mirrors
+ * this set — `tasks_type_check` MUST stay in lockstep. Adding a new type
+ * requires (1) a new constant here, (2) an ALTER TABLE migration extending
+ * the CHECK, (3) a handler in `apps/worker/src/handlers/*`, (4) registration
+ * in `apps/worker/loop.ts`.
+ *
+ * Phase 4: fetch/extract/embed/cluster + janitor + iam_refresh.
+ * Phase 5: match_news_to_workspaces + score_workspace_match + recompute_topic_embedding.
  */
 export const TASK_TYPES = [
   'fetch_source',
@@ -14,6 +18,9 @@ export const TASK_TYPES = [
   'cluster_news',
   'janitor_release_stuck_tasks',
   'refresh_iam_token',
+  'match_news_to_workspaces',
+  'score_workspace_match',
+  'recompute_topic_embedding',
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 

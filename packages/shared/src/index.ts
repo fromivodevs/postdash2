@@ -32,3 +32,11 @@ export {
   type SourceSubscriptionProjection,
   type SourceSubscriptionListProjection,
 } from './topic-source-projection.js';
+export {
+  RadarMatchProjectionSchema,
+  RadarListProjectionSchema,
+  RADAR_MATCH_STATUSES,
+  type RadarMatchProjection,
+  type RadarListProjection,
+  type RadarMatchStatus,
+} from './radar-projection.js';

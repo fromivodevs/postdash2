@@ -11,6 +11,7 @@ import { channelsRoute } from './routes/channels.js';
 import { healthRoutes } from './routes/health.js';
 import { meRoute } from './routes/me.js';
 import { readyRoutes } from './routes/ready.js';
+import { radarRoute } from './routes/radar.js';
 import { sourcesRoute } from './routes/sources.js';
 import { telegramWebhookRoute } from './routes/telegram-webhook.js';
 import { topicsRoute } from './routes/topics.js';
@@ -200,6 +201,11 @@ export async function buildApp(
     initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
   });
   await app.register(sourcesRoute, {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
+  });
+  // Phase 5: GET /radar (read-only). Same self-503 contract as topics/sources.
+  await app.register(radarRoute, {
     botToken: env.TELEGRAM_BOT_TOKEN,
     initDataMaxAgeSec: env.TELEGRAM_INITDATA_MAX_AGE_SEC,
   });

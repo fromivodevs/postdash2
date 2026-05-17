@@ -24,3 +24,4 @@ export type {
   SourceSubscriptionProjection,
   SourceSubscriptionListProjection,
 } from '@postdash/shared';
+export type { RadarMatchProjection, RadarListProjection, RadarMatchStatus } from '@postdash/shared';

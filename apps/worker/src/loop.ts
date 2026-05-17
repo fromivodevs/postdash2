@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
 import { type AIProvider, parseAIEnv } from '@postdash/ai';
+import { parseWorkerEnv } from './env.js';
 import type { Pool } from '@postdash/db';
 import { pollNextTask } from '@postdash/tasks';
 import { Dispatcher, type TaskHandlerCtx } from './dispatcher.js';
@@ -23,7 +24,10 @@ import {
   extractNewsItemHandler,
   fetchSourceHandler,
   janitorReleaseStuckTasksHandler,
+  matchNewsToWorkspacesHandler,
+  recomputeTopicEmbeddingHandler,
   refreshIamTokenHandler,
+  scoreWorkspaceMatchHandler,
 } from './handlers/index.js';
 
 export interface WorkerLoopOptions {
@@ -70,9 +74,12 @@ export class WorkerLoop {
       this.iamRefresh = undefined;
     }
     const ai = parseAIEnv();
+    const worker = parseWorkerEnv();
     this.aiConfig = {
       dedupeCosineThreshold: ai.AI_DEDUPE_COSINE_THRESHOLD,
       dedupeWindowHours: ai.AI_DEDUPE_WINDOW_HOURS,
+      matchingMinCosine: worker.MATCHING_MIN_COSINE,
+      autoDraftScoreThreshold: worker.AUTO_DRAFT_SCORE_THRESHOLD,
     };
     this.dispatcher = new Dispatcher()
       .register('fetch_source', fetchSourceHandler)
@@ -80,7 +87,10 @@ export class WorkerLoop {
       .register('embed_news_item', embedNewsItemHandler)
       .register('cluster_news', clusterNewsHandler)
       .register('janitor_release_stuck_tasks', janitorReleaseStuckTasksHandler)
-      .register('refresh_iam_token', refreshIamTokenHandler);
+      .register('refresh_iam_token', refreshIamTokenHandler)
+      .register('match_news_to_workspaces', matchNewsToWorkspacesHandler)
+      .register('score_workspace_match', scoreWorkspaceMatchHandler)
+      .register('recompute_topic_embedding', recomputeTopicEmbeddingHandler);
     this.scheduler = new Scheduler({
       db: opts.pool.db,
       logger: opts.logger.child({ component: 'scheduler' }),

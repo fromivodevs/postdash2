@@ -231,3 +231,109 @@ a {
   min-height: var(--touch-target-min);
   min-width: var(--touch-target-min);
 }
+
+/*
+ * Radar (Phase 5). Filter chips above the list, score-emphasized cards.
+ * Style is intentionally minimal — Phase 6 will iterate on visual polish.
+ */
+.radar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+.radar-chip {
+  font: inherit;
+  cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--tg-theme-secondary-bg-color, rgba(0, 0, 0, 0.05));
+  color: var(--tg-theme-text-color, inherit);
+  min-height: var(--touch-target-min);
+}
+.radar-chip--active {
+  background: var(--tg-theme-button-color, var(--color-link-fallback));
+  color: var(--tg-theme-button-text-color, #fff);
+}
+.radar-skeleton {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.radar-skeleton__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.radar-card__title {
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+.radar-card__link {
+  color: inherit;
+  text-decoration: none;
+}
+.radar-card__link:hover {
+  text-decoration: underline;
+}
+.radar-card__subtitle {
+  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+  font-size: 0.875em;
+}
+.radar-card__reason {
+  margin-top: var(--space-2);
+  color: var(--tg-theme-text-color, inherit);
+}
+.radar-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.radar-card__badge {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.75em;
+  border: 1px solid currentColor;
+}
+.radar-card__badge--positive {
+  color: #178f47;
+}
+.radar-card__badge--warning {
+  color: #b35a00;
+}
+.radar-card__badge--danger {
+  color: #c8231d;
+}
+.radar-card__badge--neutral {
+  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+}
+.radar-card__risk {
+  font-size: 0.75em;
+  color: #b35a00;
+}
+.radar-card__after {
+  display: flex;
+  align-items: center;
+  min-height: var(--touch-target-min);
+}
+.radar-card__score {
+  font-weight: 700;
+  font-size: 1.125em;
+  padding: 0 var(--space-2);
+}
+.radar-card__score--positive {
+  color: #178f47;
+}
+.radar-card__score--warning {
+  color: #b35a00;
+}
+.radar-card__score--danger {
+  color: #c8231d;
+}
+.radar-card__score--neutral {
+  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+}

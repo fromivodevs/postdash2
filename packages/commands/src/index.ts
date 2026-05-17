@@ -87,3 +87,22 @@ export {
   type ResolveRedirectFn,
 } from './sources.js';
 export { rowToTopicProfile, rowToSource, rowToSubscription } from './topic-row-mappers.js';
+
+// Phase 5: workspace_news_matches.
+export {
+  upsertWorkspaceNewsMatch,
+  suppressWorkspaceNewsMatch,
+  listRadarMatches,
+  UpsertWorkspaceNewsMatchInputSchema,
+  SuppressWorkspaceNewsMatchInputSchema,
+  ListRadarMatchesInputSchema,
+  WORKSPACE_NEWS_MATCH_STATUSES,
+  type UpsertWorkspaceNewsMatchInput,
+  type UpsertResult as UpsertWorkspaceNewsMatchResult,
+  type SuppressWorkspaceNewsMatchInput,
+  type ListRadarMatchesInput,
+  type RadarMatchRow,
+  type RadarListResult,
+  type WorkspaceNewsMatchStatus,
+  type ScoreComponents,
+} from './workspace-news-matches.js';

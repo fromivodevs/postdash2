@@ -55,8 +55,13 @@ export function makeFakePool(script: FakeDbScript = {}): FakePool {
       'onConflictDoUpdate',
       'innerJoin',
       'leftJoin',
+      'rightJoin',
+      'fullJoin',
+      'groupBy',
+      'having',
       'orderBy',
       'limit',
+      'offset',
       'for',
     ];
     for (const m of passthrough) proxy[m] = () => proxy;

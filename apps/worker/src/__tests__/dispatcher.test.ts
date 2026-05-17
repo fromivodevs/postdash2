@@ -57,7 +57,12 @@ const noopLogger = {
   debug: vi.fn(),
 } as unknown as import('pino').Logger;
 
-const stubAiConfig = { dedupeCosineThreshold: 0.15, dedupeWindowHours: 48 };
+const stubAiConfig = {
+  dedupeCosineThreshold: 0.15,
+  dedupeWindowHours: 48,
+  matchingMinCosine: 0.05,
+  autoDraftScoreThreshold: 5.0,
+};
 
 /**
  * Helper: collapse the failTask UPDATE truth-table for assertions. The

@@ -162,6 +162,15 @@ export const clusterNewsHandler: TaskHandler = async (task, ctx) => {
       WHERE id = ${payload.news_item_id} AND status IN ('new', 'extracted', 'embedded')
     `;
   });
+
+  // Fan-out to Phase 5 matcher. Outside the transaction on purpose: the
+  // partial UNIQUE `tasks_unique_active_match_per_item` (migration 0008)
+  // collapses duplicate enqueues, so a re-run of cluster_news for the same
+  // item is safe — we re-enqueue, ON CONFLICT DO NOTHING.
+  await ctx.enqueue({
+    type: 'match_news_to_workspaces',
+    payload: { news_item_id: payload.news_item_id },
+  });
 };
 
 /**

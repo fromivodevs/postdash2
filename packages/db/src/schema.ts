@@ -551,7 +551,7 @@ export const tasks = pgTable(
   (t) => [
     check(
       'tasks_type_check',
-      sql`${t.type} IN ('fetch_source', 'extract_news_item', 'embed_news_item', 'cluster_news', 'janitor_release_stuck_tasks', 'refresh_iam_token')`,
+      sql`${t.type} IN ('fetch_source', 'extract_news_item', 'embed_news_item', 'cluster_news', 'janitor_release_stuck_tasks', 'refresh_iam_token', 'match_news_to_workspaces', 'score_workspace_match', 'recompute_topic_embedding')`,
     ),
     check(
       'tasks_status_check',
@@ -757,3 +757,122 @@ export type NewsClusterRow = typeof newsClusters.$inferSelect;
 export type NewNewsClusterRow = typeof newsClusters.$inferInsert;
 export type NewsClusterItemRow = typeof newsClusterItems.$inferSelect;
 export type NewNewsClusterItemRow = typeof newsClusterItems.$inferInsert;
+
+// =============================================================================
+// Phase 5: workspace_news_matches + ai_usage_events.
+// See architecture/matching-and-scoring.md. Mirrors
+// 0008_phase5_matching_scoring.sql exactly — schema.ts <-> migration parity
+// is non-negotiable.
+// =============================================================================
+
+export const workspaceNewsMatches = pgTable(
+  'workspace_news_matches',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    newsItemId: uuid('news_item_id')
+      .notNull()
+      .references(() => globalNewsItems.id, { onDelete: 'cascade' }),
+    // cluster_id NULL means "not yet clustered" — the item-level partial
+    // UNIQUE applies. Once cluster_news attaches the item, this column flips
+    // to the cluster_id and the cluster-level UNIQUE governs dedup. Both
+    // partial UNIQUE indexes live ONLY in the migration (Drizzle's
+    // `.uniqueIndex(...).where(sql\`...\`)` mirrors them — see below).
+    clusterId: uuid('cluster_id').references(() => newsClusters.id, { onDelete: 'set null' }),
+    // numeric(4,2) — score range [0.00, 10.00]; CHECK enforces.
+    score: numeric('score', { precision: 4, scale: 2 }),
+    relevanceReason: text('relevance_reason'),
+    shouldCreateDraft: boolean('should_create_draft').notNull().default(false),
+    riskFlags: text('risk_flags')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    scoreComponents: jsonb('score_components')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    aiProvider: text('ai_provider'),
+    usedModel: text('used_model'),
+    promptVersion: text('prompt_version'),
+    status: text('status').notNull().default('candidate'),
+    scoredAt: timestamp('scored_at', { withTimezone: true, mode: 'date' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'workspace_news_matches_status_check',
+      sql`${t.status} IN ('candidate', 'filtered_negative', 'hidden', 'ai_refused', 'low_score', 'suppressed')`,
+    ),
+    check(
+      'workspace_news_matches_score_range_check',
+      sql`${t.score} IS NULL OR (${t.score} >= 0 AND ${t.score} <= 10)`,
+    ),
+    check(
+      'workspace_news_matches_reason_length_check',
+      sql`${t.relevanceReason} IS NULL OR length(${t.relevanceReason}) <= 280`,
+    ),
+    uniqueIndex('workspace_news_matches_workspace_cluster_uniq')
+      .on(t.workspaceId, t.clusterId)
+      .where(sql`${t.clusterId} IS NOT NULL`),
+    uniqueIndex('workspace_news_matches_workspace_item_uniq')
+      .on(t.workspaceId, t.newsItemId)
+      .where(sql`${t.clusterId} IS NULL`),
+    index('workspace_news_matches_workspace_status_score_idx').on(t.workspaceId, t.status, t.score),
+    index('workspace_news_matches_news_item_idx').on(t.newsItemId),
+  ],
+);
+
+export const aiUsageEvents = pgTable(
+  'ai_usage_events',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'set null' }),
+    // task_id is intentionally NOT a FK — the audit trail must survive future
+    // tasks-row retention sweeps (see migration 0008 comment). Joinable while
+    // both rows exist; orphan when tasks GC'd.
+    taskId: uuid('task_id'),
+    actionType: text('action_type').notNull(),
+    usedModel: text('used_model').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    costRub: numeric('cost_rub', { precision: 10, scale: 4 }).notNull().default('0'),
+    durationMs: integer('duration_ms').notNull().default(0),
+    status: text('status').notNull(),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'ai_usage_events_action_check',
+      sql`${t.actionType} IN ('score', 'generate', 'rewrite', 'embed')`,
+    ),
+    check(
+      'ai_usage_events_status_check',
+      sql`${t.status} IN ('success', 'failed', 'refused', 'parse_error', 'fallback')`,
+    ),
+    check('ai_usage_events_tokens_nonneg', sql`${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0`),
+    check('ai_usage_events_cost_nonneg', sql`${t.costRub} >= 0`),
+    check('ai_usage_events_duration_nonneg', sql`${t.durationMs} >= 0`),
+    check(
+      'ai_usage_events_error_length_check',
+      sql`${t.errorMessage} IS NULL OR length(${t.errorMessage}) <= 500`,
+    ),
+    index('ai_usage_events_created_at_idx').on(t.createdAt),
+    index('ai_usage_events_workspace_created_idx')
+      .on(t.workspaceId, t.createdAt)
+      .where(sql`${t.workspaceId} IS NOT NULL`),
+    index('ai_usage_events_action_status_idx').on(t.actionType, t.status, t.createdAt),
+  ],
+);
+
+export type WorkspaceNewsMatchRow = typeof workspaceNewsMatches.$inferSelect;
+export type NewWorkspaceNewsMatchRow = typeof workspaceNewsMatches.$inferInsert;
+export type AiUsageEventRow = typeof aiUsageEvents.$inferSelect;
+export type NewAiUsageEventRow = typeof aiUsageEvents.$inferInsert;

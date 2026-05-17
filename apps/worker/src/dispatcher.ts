@@ -39,13 +39,18 @@ export interface TaskHandlerCtx {
    */
   iamRefresh?: () => Promise<void>;
   /**
-   * Phase 4 dedup tunables, surfaced via ctx so handlers don't re-parse env on
-   * every dispatch (module-level `parseAIEnv()` would also leak side effects
-   * across vitest workers). `loop.ts` parses env once at construction time.
+   * Phase 4 dedup + Phase 5 matching tunables, surfaced via ctx so handlers
+   * don't re-parse env on every dispatch (module-level `parseAIEnv()` would
+   * also leak side effects across vitest workers). `loop.ts` parses env once
+   * at construction time.
    */
   aiConfig: {
     dedupeCosineThreshold: number;
     dedupeWindowHours: number;
+    /** Skip LLM scoring when topic-news cosine similarity < this value. */
+    matchingMinCosine: number;
+    /** Below this composite score, status flips to 'low_score' (UI demote). */
+    autoDraftScoreThreshold: number;
   };
 }
 

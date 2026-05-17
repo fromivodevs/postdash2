@@ -6,6 +6,9 @@ export const workerEnvSchema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
   TASK_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   TASK_LEASE_MINUTES: z.coerce.number().int().positive().default(5),
+  // Phase 5 tunables — see tg_mvp_plan/06-WORKERS-AND-INGESTION.md §17.
+  MATCHING_MIN_COSINE: z.coerce.number().min(0).max(1).default(0.05),
+  AUTO_DRAFT_SCORE_THRESHOLD: z.coerce.number().min(0).max(10).default(5.0),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

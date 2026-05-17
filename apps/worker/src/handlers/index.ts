@@ -4,3 +4,6 @@ export { embedNewsItemHandler } from './embed-news-item.js';
 export { clusterNewsHandler } from './cluster-news.js';
 export { janitorReleaseStuckTasksHandler } from './janitor-release-stuck-tasks.js';
 export { refreshIamTokenHandler } from './refresh-iam-token.js';
+export { matchNewsToWorkspacesHandler } from './match-news-to-workspaces.js';
+export { scoreWorkspaceMatchHandler } from './score-workspace-match.js';
+export { recomputeTopicEmbeddingHandler } from './recompute-topic-embedding.js';

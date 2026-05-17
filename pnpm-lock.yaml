@@ -145,6 +145,9 @@ importers:
       '@postdash/ai':
         specifier: workspace:*
         version: link:../../packages/ai
+      '@postdash/commands':
+        specifier: workspace:*
+        version: link:../../packages/commands
       '@postdash/db':
         specifier: workspace:*
         version: link:../../packages/db

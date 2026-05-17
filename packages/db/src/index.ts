@@ -20,6 +20,8 @@ export {
   globalNewsItems,
   newsClusters,
   newsClusterItems,
+  workspaceNewsMatches,
+  aiUsageEvents,
   type UserRow,
   type NewUserRow,
   type WorkspaceRow,
@@ -56,4 +58,8 @@ export {
   type NewNewsClusterRow,
   type NewsClusterItemRow,
   type NewNewsClusterItemRow,
+  type WorkspaceNewsMatchRow,
+  type NewWorkspaceNewsMatchRow,
+  type AiUsageEventRow,
+  type NewAiUsageEventRow,
 } from './schema.js';

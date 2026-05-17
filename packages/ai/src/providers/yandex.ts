@@ -2,14 +2,19 @@
  * Yandex AI Studio adapter — primary provider.
  *
  * Phase 4 implements `embed()` (real HTTP call, IAM-bearer auth, dim
- * validation, single 401-retry on token expiry). `score()`, `generateDraft()`,
- * `rewriteDraft()` remain `not_implemented` stubs until Phase 5/6.
+ * validation, single 401-retry on token expiry).
+ * Phase 5 implements `score()` (relevance scoring via DeepSeek completion,
+ * zod-validated JSON output, one repair-attempt on parse failure).
+ * `generateDraft()` / `rewriteDraft()` remain `not_implemented` stubs until
+ * Phase 6.
  *
  * See tg_mvp_plan/11-AI-PROVIDER.md §4.1, §5, §6, §9.
  */
 
+import { z } from 'zod';
 import {
   AIProviderError,
+  ScoreOutputSchema,
   type AIProvider,
   type DraftInput,
   type DraftOutput,
@@ -22,6 +27,48 @@ import {
 import type { IAMTokenCache } from '../iam-token.js';
 
 const EMBEDDING_ENDPOINT = 'https://llm.api.cloud.yandex.net/foundationModels/v1/textEmbedding';
+const COMPLETION_ENDPOINT = 'https://llm.api.cloud.yandex.net/foundationModels/v1/completion';
+
+/**
+ * Hard cap on the news body fed into the score prompt. Beyond ~8k chars the
+ * additional context rarely changes the relevance score but burns input
+ * tokens linearly. The prompt template documents this in
+ * tg_mvp_plan/07-AI-SCORING-AND-DRAFTS.md §8.1 ("extracted_text_truncated_8k").
+ */
+const SCORE_PROMPT_BODY_MAX_CHARS = 8_000;
+
+/** Stable id for prompt-version tracking. Bump on any template change. */
+export const YANDEX_SCORE_PROMPT_VERSION = 'yandex-deepseek-score@v1.0';
+
+/**
+ * Foundation Models completion response shape. We only consume the fields we
+ * need so the parser tolerates new SDK fields without breaking. Cast through
+ * zod for runtime safety — the upstream contract has no guarantee against
+ * field renaming.
+ */
+const CompletionResponseSchema = z.object({
+  result: z.object({
+    alternatives: z
+      .array(
+        z.object({
+          message: z.object({
+            role: z.string(),
+            text: z.string(),
+          }),
+          status: z.string().optional(),
+        }),
+      )
+      .min(1),
+    usage: z
+      .object({
+        inputTextTokens: z.union([z.string(), z.number()]).optional(),
+        completionTokens: z.union([z.string(), z.number()]).optional(),
+        totalTokens: z.union([z.string(), z.number()]).optional(),
+      })
+      .optional(),
+    modelVersion: z.string().optional(),
+  }),
+});
 
 export interface YandexProviderConfig {
   folderId: string;
@@ -56,10 +103,60 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
     this.iamToken = config.iamToken;
   }
 
-  async score(_input: ScoreInput): Promise<ScoreOutput> {
+  /**
+   * Relevance score for (workspace, news_item). Returns a `ScoreOutput`
+   * validated by `ScoreOutputSchema` — score clamped to [0,10], reason ≤280
+   * chars, risk_flags surfaced from the LLM response.
+   *
+   * Failure modes (matrix in tg_mvp_plan/11-AI-PROVIDER.md §9):
+   *   - 401 → force IAM refresh + retry once. Still 401 → `auth_error`.
+   *   - 429 → `rate_limit` (handler retries with backoff).
+   *   - 5xx → `server_error` (transient; handler retries).
+   *   - 4xx → `parse_error` (permanent; handler swaps to TemplateProvider).
+   *   - Safety refusal (alternative.status='ALTERNATIVE_STATUS_CONTENT_FILTER'
+   *     or risk_flags contains 'refused') → `refused`.
+   *   - JSON parse failure → ONE repair-attempt with a stricter system prompt;
+   *     if that still fails → `parse_error` (handler falls back).
+   *
+   * Repair-attempt is intentionally a single retry — DeepSeek 3.2 has reliable
+   * JSON mode, so a persistent parse failure usually means the prompt template
+   * drifted, not model flakiness. Retrying many times would burn tokens
+   * without converging.
+   */
+  async score(input: ScoreInput): Promise<ScoreOutput> {
+    const messages = buildScoreMessages(input);
+    const firstText = await this.completion(messages);
+    const firstParsed = tryParseScoreJson(firstText);
+    if (firstParsed.ok) {
+      return finalizeScore(firstParsed.value);
+    }
+
+    // ONE repair-attempt. The repair system prompt is added on top of the
+    // original messages (instead of replacing them) so the model still sees
+    // the original input context.
+    const repairMessages: ChatMessage[] = [
+      ...messages,
+      {
+        role: 'assistant',
+        text: firstText.slice(0, 800),
+      },
+      {
+        role: 'system',
+        text:
+          'Your previous response was not valid JSON matching the schema. ' +
+          'Return ONLY a JSON object with keys: score (number 0..10), ' +
+          'relevance_reason (string <=280 chars), should_create_draft (bool), ' +
+          'risk_flags (string[]). No prose, no markdown, no code fences.',
+      },
+    ];
+    const secondText = await this.completion(repairMessages);
+    const secondParsed = tryParseScoreJson(secondText);
+    if (secondParsed.ok) {
+      return finalizeScore(secondParsed.value);
+    }
     throw new AIProviderError(
-      'YandexAIStudioDeepSeekProvider.score() not implemented (Phase 5)',
-      'not_implemented',
+      `score parse failed after repair: ${secondParsed.reason}`,
+      'parse_error',
     );
   }
 
@@ -212,4 +309,282 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
   protected embedModelUriFor(kind: 'doc' | 'query'): string {
     return kind === 'doc' ? this.config.embedDocModelUri : this.config.embedQueryModelUri;
   }
+
+  /**
+   * Single round-trip to the completion endpoint. Returns the assistant text
+   * exactly as the model produced it (parsing/validation is the caller's job).
+   *
+   * Error mapping mirrors `embed()` 1:1 so the failure matrix stays uniform
+   * across LLM and embedding calls.
+   */
+  private async completion(messages: ChatMessage[]): Promise<string> {
+    const body = {
+      modelUri: this.config.llmModelUri,
+      completionOptions: {
+        stream: false,
+        temperature: this.config.llmTemperature,
+        maxTokens: String(this.config.llmMaxTokens),
+      },
+      messages,
+    };
+
+    const send = async (token: string): Promise<Response> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs);
+      try {
+        return await this.fetchImpl(COMPLETION_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+            'x-folder-id': this.config.folderId,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    let token = await this.config.iamToken.getToken();
+    let response: Response;
+    try {
+      response = await send(token);
+    } catch (err) {
+      throw new AIProviderError(
+        `completion network error: ${(err as Error).message ?? String(err)}`,
+        'server_error',
+        err,
+      );
+    }
+
+    if (response.status === 401) {
+      token = await this.config.iamToken.forceRefresh();
+      try {
+        response = await send(token);
+      } catch (err) {
+        throw new AIProviderError(
+          `completion retry-after-401 network error: ${(err as Error).message ?? String(err)}`,
+          'server_error',
+          err,
+        );
+      }
+      if (response.status === 401) {
+        throw new AIProviderError('completion still 401 after token refresh', 'auth_error');
+      }
+    }
+
+    if (response.status === 429) {
+      throw new AIProviderError('completion rate-limited (429)', 'rate_limit');
+    }
+    if (response.status >= 500) {
+      throw new AIProviderError(`completion upstream ${response.status}`, 'server_error');
+    }
+    if (response.status >= 400) {
+      throw new AIProviderError(`completion rejected with ${response.status}`, 'parse_error');
+    }
+
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch (err) {
+      throw new AIProviderError('completion response is not JSON', 'parse_error', err);
+    }
+
+    const parsed = CompletionResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new AIProviderError(
+        `completion envelope shape unexpected: ${parsed.error.issues
+          .map((i) => i.message)
+          .join('; ')
+          .slice(0, 200)}`,
+        'parse_error',
+      );
+    }
+    const first = parsed.data.result.alternatives[0]!;
+    // Yandex marks safety-filter rejections via the alternative status. Map
+    // explicitly so the score handler can short-circuit to the 'ai_refused'
+    // workspace_news_matches status without a TemplateProvider fallback.
+    if (first.status === 'ALTERNATIVE_STATUS_CONTENT_FILTER') {
+      throw new AIProviderError('completion refused by safety filter', 'refused');
+    }
+    return first.message.text;
+  }
+}
+
+// =============================================================================
+// Helpers (module-level, no `this`).
+// =============================================================================
+
+/**
+ * Message envelope for Foundation Models. Yandex calls it `messages: [{role, text}]`
+ * — note `text` not `content`. Roles supported: 'system' | 'user' | 'assistant'.
+ */
+interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  text: string;
+}
+
+/**
+ * Build the score prompt messages. Mirrors the schema-by-prose contract in
+ * tg_mvp_plan/07-AI-SCORING-AND-DRAFTS.md §8.1, with body truncated to keep
+ * prompt budget predictable.
+ */
+function buildScoreMessages(input: ScoreInput): ChatMessage[] {
+  const body = input.news.extracted_text ?? input.news.summary ?? input.news.title;
+  const truncatedBody =
+    body.length > SCORE_PROMPT_BODY_MAX_CHARS
+      ? `${[...body].slice(0, SCORE_PROMPT_BODY_MAX_CHARS).join('')}…`
+      : body;
+
+  const tp = input.topic_profile;
+  const negative = tp.negative_keywords.length > 0 ? tp.negative_keywords.join(', ') : '(none)';
+  const mainTopics = tp.main_topics.length > 0 ? tp.main_topics.join(', ') : '(none)';
+  const keywords = tp.keywords.length > 0 ? tp.keywords.join(', ') : '(none)';
+  const publishedAt = input.news.published_at ? input.news.published_at.toISOString() : '(unknown)';
+
+  const system =
+    'You are an editorial assistant scoring news relevance for a publication channel. ' +
+    'Output STRICT JSON matching: {"score": number 0-10, "relevance_reason": string (max 280 chars), ' +
+    '"should_create_draft": boolean, "risk_flags": string[]}. ' +
+    'No prose, no markdown, no code fences. ' +
+    'Risk flags vocabulary: "medical_claim", "financial_advice", "legal_advice", ' +
+    '"unverified_statistic", "personal_data", "refused". ' +
+    'If you cannot or will not score the news, return risk_flags=["refused"] and score=0.';
+
+  const user = [
+    `Workspace language: ${input.language}.`,
+    `Main topics: ${mainTopics}.`,
+    `Positive keywords: ${keywords}.`,
+    `Negative keywords (penalize hard): ${negative}.`,
+    '',
+    'News:',
+    `- Title: ${input.news.title}`,
+    `- Published: ${publishedAt}`,
+    `- URL: ${input.news.url}`,
+    `- Body:\n${truncatedBody}`,
+  ].join('\n');
+
+  return [
+    { role: 'system', text: system },
+    { role: 'user', text: user },
+  ];
+}
+
+/**
+ * Try to parse a JSON object out of the model's text. Handles two common
+ * mis-formats DeepSeek occasionally produces despite JSON-mode instructions:
+ *   - leading/trailing prose ("Here's the JSON: { ... }")
+ *   - markdown fences (```json ... ```)
+ *
+ * Returns the typed shape on success, or a reason string on failure (so the
+ * caller can decide between a repair-attempt and bubbling parse_error).
+ */
+function tryParseScoreJson(
+  text: string,
+): { ok: true; value: ParsedScoreLoose } | { ok: false; reason: string } {
+  const trimmed = text.trim();
+  const candidate = extractJsonObject(trimmed);
+  if (!candidate) return { ok: false, reason: 'no JSON object found in response' };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(candidate);
+  } catch (err) {
+    return { ok: false, reason: `JSON.parse: ${(err as Error).message}` };
+  }
+  const parsed = ParsedScoreLooseSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ')
+        .slice(0, 200),
+    };
+  }
+  return { ok: true, value: parsed.data };
+}
+
+/**
+ * Pull out the first balanced `{...}` substring. Tolerates leading text like
+ * "Here's the JSON:" and code fences. Returns null if no candidate found.
+ */
+function extractJsonObject(text: string): string | null {
+  // Strip markdown fences first if present.
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const body = fenceMatch?.[1] ?? text;
+  const start = body.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < body.length; i++) {
+    const c = body[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) {
+        return body.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Lenient parse of the model output before clamping. The model may return
+ * score outside [0,10] or relevance_reason >280 chars; clamping happens in
+ * finalizeScore so the partial output isn't thrown away.
+ */
+const ParsedScoreLooseSchema = z.object({
+  score: z.number(),
+  relevance_reason: z.string(),
+  should_create_draft: z.boolean(),
+  risk_flags: z.array(z.string()),
+});
+type ParsedScoreLoose = z.infer<typeof ParsedScoreLooseSchema>;
+
+/**
+ * Clamp score, truncate reason, and validate against the strict
+ * `ScoreOutputSchema`. If the strict validation fails (e.g. NaN score), throw
+ * parse_error — that's a model fault the caller may fall back from.
+ */
+function finalizeScore(loose: ParsedScoreLoose): ScoreOutput {
+  if (!Number.isFinite(loose.score)) {
+    throw new AIProviderError('score is not a finite number', 'parse_error');
+  }
+  const clampedScore = Math.max(0, Math.min(10, loose.score));
+  const truncatedReason =
+    loose.relevance_reason.length > 280
+      ? [...loose.relevance_reason].slice(0, 279).join('') + '…'
+      : loose.relevance_reason;
+  const refused = loose.risk_flags.includes('refused');
+  // Refused content is communicated via risk_flags=['refused'] and score=0 —
+  // mirrors what the system prompt asks for. Bubble as `refused` so the
+  // dispatcher can mark the match row 'ai_refused' without a fallback.
+  if (refused) {
+    throw new AIProviderError('model returned risk_flags=["refused"]', 'refused');
+  }
+  return ScoreOutputSchema.parse({
+    score: clampedScore,
+    relevance_reason: truncatedReason,
+    should_create_draft: loose.should_create_draft,
+    risk_flags: loose.risk_flags,
+    used_model: 'yandex-deepseek-v3.2',
+    prompt_version: YANDEX_SCORE_PROMPT_VERSION,
+  });
 }

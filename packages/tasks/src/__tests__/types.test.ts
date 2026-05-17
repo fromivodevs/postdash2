@@ -21,6 +21,9 @@ describe('TASK_TYPES', () => {
       'cluster_news',
       'janitor_release_stuck_tasks',
       'refresh_iam_token',
+      'match_news_to_workspaces',
+      'score_workspace_match',
+      'recompute_topic_embedding',
     ]);
   });
 });

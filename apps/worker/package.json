@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@postdash/ai": "workspace:*",
+    "@postdash/commands": "workspace:*",
     "@postdash/db": "workspace:*",
     "@postdash/shared": "workspace:*",
     "@postdash/sources": "workspace:*",
