@@ -486,9 +486,23 @@ export async function resolveRedirect(
     };
   }
 
-  // Exceeded MAX_HOPS. Return the LAST URL we were trying to follow so the
-  // caller can canonicalize it — better than the original shortener, even if
-  // we didn't reach the true terminus.
+  // Exceeded MAX_HOPS. Stability check still runs — otherwise a 5-redirect
+  // chain bypasses post-fetch rebinding detection on the final touched hop
+  // (security audit round 5 catch).
+  if (!skipSsrfCheck && currentSnapshot && currentSnapshot.resolvedIps.length > 0) {
+    const stability = await checkDnsStability(currentSnapshot, dnsLookup);
+    if (!stability.stable) {
+      return {
+        finalUrl: currentUrl,
+        status: 'blocked_private_ip',
+        hops,
+        error: stability.reason,
+      };
+    }
+  }
+  // Return the LAST URL we were trying to follow so the caller can canonicalize
+  // it — better than the original shortener, even if we didn't reach the true
+  // terminus.
   return {
     finalUrl: currentUrl,
     status: 'too_many_hops',

@@ -25,8 +25,6 @@ import {
 
 const SOURCES_QUERY_KEY = ['sources'] as const;
 
-type SourceType = SourceTypeOption;
-
 export function AddSourceScreen(): ReactNode {
   const [, navigate] = useLocation();
   useBackButton({ visible: true, onClick: () => navigate(ROUTES.sources) });
@@ -36,7 +34,7 @@ export function AddSourceScreen(): ReactNode {
   const initData = session?.initData;
 
   const [url, setUrl] = useState('');
-  const [type, setType] = useState<SourceType>('rss');
+  const [type, setType] = useState<SourceTypeOption>('rss');
   const [name, setName] = useState('');
   // §7 FieldError: validation lives next to the bad input, not in a toast.
   const [urlError, setUrlError] = useState<string | null>(null);

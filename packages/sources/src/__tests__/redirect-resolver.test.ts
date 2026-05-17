@@ -309,6 +309,33 @@ describe('resolveRedirect: SSRF defence', () => {
     expect(r.status).toBe('no_redirect');
   });
 
+  it('runs DNS stability check before too_many_hops return (no bypass via max-hop chain)', async () => {
+    // dns call sequence for a maxHops=2 chain:
+    //   call 1: initial SSRF check on https://a.example/        → public
+    //   call 2: per-hop check on https://a.example/2 (hop 1)    → public
+    //   call 3: per-hop check on https://a.example/3 (hop 2)    → public
+    //   call 4: too_many_hops post-stability check              → PRIVATE (attacker flip)
+    // Without the fix, too_many_hops would return without call 4 firing.
+    let call = 0;
+    const dns = async () => {
+      call++;
+      if (call < 4) return [{ address: '93.184.216.34', family: 4 } as const];
+      return [{ address: '10.0.0.1', family: 4 } as const];
+    };
+    const f = mockFetchChain([
+      { url: 'https://a.example/', status: 301, location: 'https://a.example/2' },
+      { url: 'https://a.example/2', status: 301, location: 'https://a.example/3' },
+    ]);
+    const r = await resolveRedirect('https://a.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+      maxHops: 2,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('rebinding');
+  });
+
   it('skips DNS stability check for bare-IP hosts (no DNS to rebind)', async () => {
     const dns = vi.fn(); // should not be called
     const f = mockFetchChain([{ url: 'https://93.184.216.34/', status: 200 }]);
