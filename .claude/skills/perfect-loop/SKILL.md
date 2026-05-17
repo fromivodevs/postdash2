@@ -149,6 +149,7 @@ Customize разрешён только если пользователь явн
 `.claude/perfect-loop-runs/<timestamp>-<slug>/`:
 - `target.md`, `config.json`, `facts-cache.json`
 - `main-N/sub-M/{scores.json, tier-*.md, implementer-output.md, revised-artifact.md}`
+- `main-N/sub-M/agent-ids.json` (SendMessage режим) ИЛИ `main-N/sub-M/reviews/<role>.json` (memory-injection режим) — см. "Tooling fallback"
 - `main-N/SUMMARY.md` — траектория score, что находил breaker, что менял implementer
 - `main-N/final-artifact.md`
 - `REPORT.md` — итог + FINAL STATUS + ссылки
@@ -175,21 +176,32 @@ Customize разрешён только если пользователь явн
 1. Спросить параметры (если не "with defaults")
 2. Прочитать артефакт, проанализировать тип/домен
 3. Проверить roster, при необходимости предложить новых субагентов
-4. Создать <run_dir>, сохранить config.json
-5. for main_loop in 1..max_main_loops:
-     fresh_agents = spawn fresh Agent() instances     # см. Tooling §
+4. ToolSearch("select:SendMessage") → mode = "send-message" | "memory-injection"
+5. Создать <run_dir>, сохранить config.json (включая tooling.send_message_available)
+6. for main_loop in 1..max_main_loops:
      for sub_loop in 1..max_sub_loops:
        if sub_loop == 1:
-         parallel: Agent() calls for core + specialists  # fresh agents
+         parallel: Agent() calls for core + specialists
+           prompt = ARTIFACT + ANCHORS                  # БЕЗ прошлой истории
+         save agent_ids (mode=send-message) OR reviews/<role>.json (mode=injection)
        else:
-         parallel: SendMessage(to=agent_id) calls        # SAME agents, +diff
-       Tier3: synthesizer + goal-keeper
-       check stop conditions
+         if mode == "send-message":
+           parallel: SendMessage(to=agent_id, prompt=delta+applied) to SAME agents
+         else:  # mode == "memory-injection"
+           parallel: Agent() calls fresh, но в prompt инъецируем:
+             - читаем reviews/<role>.json от sub_loop M-1
+             - читаем implementer/applied.json от sub_loop M-1
+             - prompt = "Прошлый score: X. Прошлый rationale: Y. Applied: Z.
+                        Re-score текущий артефакт. ARTIFACT + ANCHORS."
+       сохранить outputs → reviews/<role>.json
+       Tier3: synthesizer + goal-keeper (тот же выбор режима)
+       check stop conditions (PERFECT_FRESH / delta / sub-cap)
        if not stopped:
-         pl-implementer applies fixes
+         pl-implementer applies fixes → implementer/applied.json
          pl-fix-reviewer verifies diff
      write main-N/SUMMARY.md
-6. Write REPORT.md with FINAL STATUS
+     # main_loop boundary: в обоих режимах СВЕЖИЕ Agent() БЕЗ инъекции истории
+7. Write REPORT.md with FINAL STATUS (+ tooling_mode для воспроизводимости)
 ```
 
 ## Orchestrator tooling: `Agent()` vs `SendMessage` (NON-NEGOTIABLE)
@@ -233,7 +245,7 @@ break_id = Agent(subagent_type="pl-breaker",   prompt=CURRENT_ARTIFACT + ANCHORS
 
 ### Anti-pattern
 
-Запускать `Agent()` подряд для каждой итерации = делать N main_loops с одним sub_loop каждый.
+Запускать `Agent()` подряд для каждой итерации БЕЗ передачи прошлой критики = делать N main_loops с одним sub_loop каждый.
 - Технически работает (PERFECT_FRESH достигается на N-м `Agent()` round'е), но:
   - prompt cache miss на каждом round (дорого);
   - ревьюер не видит свой собственный progress (теряется специфичный сигнал "я в прошлый раз требовал X, теперь X сделан, остаётся Y");
@@ -241,3 +253,85 @@ break_id = Agent(subagent_type="pl-breaker",   prompt=CURRENT_ARTIFACT + ANCHORS
   - стоп-rule "delta < 0.5 два sub_loop'а подряд" (STOP §4) не сработает потому что каждый round — это новый main_loop, dеlta не tracked внутри одного main.
 
 State каждого main_loop ДОЛЖЕН хранить `{role: agentId}` map чтобы sub_loops через SendMessage были к ТЕМ ЖЕ агентам. На переходе к следующему main_loop этот map очищается.
+
+## Tooling fallback: SendMessage недоступен
+
+Не во всех Claude Code окружениях есть tool `SendMessage`. Перед main_loop 1 оркестратор обязан проверить через `ToolSearch(query="select:SendMessage")` доступность. Дальше — два режима.
+
+### Режим A: SendMessage есть (preferred)
+
+Каноничный pattern из секции выше. sub_loop M → M+1 = SendMessage к тому же agentId, передаётся только delta. PERFECT_FRESH достижим на main_loop ≥ 2 / sub_loop == 1 как обычно.
+
+### Режим B: SendMessage нет (memory-injection fallback)
+
+Семантика сохраняется через явное passing of state в свежий `Agent()`. Reviewer ведёт себя как "тот же агент" потому что видит свою прошлую критику + delta в новом prompt'е.
+
+**File layout (per sub_loop M):**
+
+```
+main-N/sub-M/
+  reviews/
+    pl-architect.json     ← полный JSON output ревьюера
+    pl-breaker.json
+    pl-security-auditor.json
+    ...
+  implementer/
+    applied.json          ← {applied: [...], skipped: [...], diff_summary: "..."}
+    revised-artifact.md
+  scores.json             ← агрегированные scores + min
+  synth.json
+```
+
+**Pattern для sub_loop M+1 (внутри main_loop N):**
+
+```
+# Для каждой роли — свежий Agent(), но с прошлым context'ом:
+prompt_per_role = read('main-N/sub-M/reviews/<role>.json')   # прошлый rationale + blockers
+applied         = read('main-N/sub-M/implementer/applied.json')
+artifact_delta  = git_diff_since_last_sub_loop()
+
+prompt_template = """
+Ты pl-<role>. В прошлом sub_loop этого main_loop ты поставил оценку {prev_score}.
+Твой прошлый rationale: {prev_rationale}
+Твои прошлые blockers: {prev_blockers}
+Твои прошлые improvements: {prev_improvements}
+
+Между прошлым sub_loop и текущим, implementer применил эти fixes: {applied}
+Артефакт обновлён, diff: {artifact_delta}
+
+ЗАДАЧА: re-score текущее состояние артефакта.
+- Если твои прошлые blockers закрыты — отметь.
+- Если появились новые проблемы из-за fix'ов — назови.
+- Если delta < 0.5 vs прошлой оценки — обоснуй (что мешает дальше расти).
+- Не делай вид что видишь артефакт впервые — ты УЖЕ имел свою позицию.
+
+Output: тот же JSON формат + поле "delta_vs_previous_subloop": "+/-X with reason".
+{ANCHORS}
+{CURRENT_ARTIFACT}
+"""
+
+Agent(subagent_type="pl-<role>", prompt=prompt_template)
+```
+
+**Pattern для main_loop N+1:** свежий `Agent()` БЕЗ инъекции прошлой критики — только артефакт + anchors. Это даёт fresh-confirm для PERFECT_FRESH stop.
+
+**Стоимость vs SendMessage:**
+
+| Метрика | SendMessage | Memory-injection fallback |
+|---|---|---|
+| Prompt cache hit на sub_loop M+1 | Да | Нет (новый процесс) |
+| Reviewer видит свой past rationale | Implicit (агент в памяти) | Explicit (передан в prompt) |
+| Семантика PERFECT_FRESH | Корректна | Корректна (main_loop N+1 НЕ инъектит историю) |
+| Семантика delta-stuck (STOP §4) | Корректна | Корректна — orchestrator вычисляет delta из scores.json |
+| Output JSON | Идентичен | Идентичен |
+
+### Признаки правильного fallback-режима в state:
+
+- `config.json.tooling.send_message_available = false`
+- `main-N/sub-M/reviews/<role>.json` существует для каждого M ≥ 1
+- На переходе main_loop N → N+1: orchestrator НЕ передаёт `reviews/` в prompt свежих агентов (только текущий артефакт)
+- В REPORT.md FINAL STATUS считается так же, как с SendMessage; единственная разница — пометка `tooling_mode: "memory-injection"` для воспроизводимости
+
+### Anti-pattern в fallback-режиме
+
+Просто звать `Agent()` каждый sub_loop без injection прошлой критики = тот же anti-pattern что описан выше (N main_loops × 1 sub_loop). Это **не** ваш режим B. Режим B обязательно читает `main-N/sub-(M-1)/reviews/<role>.json` и передаёт его в prompt.
