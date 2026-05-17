@@ -78,6 +78,15 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
   }
 
   /**
+   * Force-refresh the IAM token cache. Exposed via the optional
+   * `AIProvider.iamRefresh` seam so the worker's `refresh_iam_token` handler
+   * can invoke it without `instanceof` checks against this concrete class.
+   */
+  async iamRefresh(): Promise<void> {
+    await this.config.iamToken.forceRefresh();
+  }
+
+  /**
    * Generate an embedding for `input.text` against the doc or query model
    * (chosen by `input.kind`). Validates that the response vector length
    * matches `config.embeddingDim` (256 in MVP) — a mismatch is a permanent

@@ -494,6 +494,7 @@ up only enough that the absence is not a silent footgun:
 
 - `packages/db/migrations/0005_phase4.sql` + `.down.sql` — 6 таблиц + индексы + pgvector ivfflat.
 - `packages/db/migrations/0006_phase4_hardening.sql` + `.down.sql` — partial UNIQUE indexes on `(payload->>'news_item_id')` for `extract_news_item` and `embed_news_item` (anti-dupe).
+- `packages/db/migrations/0007_phase4_perf_security.sql` + `.down.sql` — re-creates `tasks_polling_idx` with `(priority DESC, scheduled_at ASC)` column order (matches polling ORDER BY) and adds `cluster_news` partial UNIQUE on `(payload->>'news_item_id')`.
 - `packages/db/src/schema.ts` — mirror новых таблиц.
 - `packages/tasks/` — новый package: `src/queue.ts`, `src/types.ts`, `src/__tests__/queue.test.ts`, `package.json`, `tsconfig.json`.
 - `packages/sources/src/rss-parser.ts` — fetch + parse RSS.
@@ -527,7 +528,7 @@ up only enough that the absence is not a silent footgun:
 
 ## Status
 
-In progress — Phase 4 implementation.
+Active. Closed at tag `phase-4-perfect-r2`. Phase 4+ ops follow-ups tracked in section above.
 
 ## Last touched
 

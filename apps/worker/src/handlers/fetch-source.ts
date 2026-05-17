@@ -92,10 +92,32 @@ export const fetchSourceHandler: TaskHandler = async (task, ctx) => {
     throw permanent(`ssrf re-check blocked: ${guard.error ?? 'private ip'}`);
   }
 
+  // Any non-success guard status (timeout, network_error, too_many_hops,
+  // invalid_input) leaves `guard.finalUrl` pointing at the LAST URL we were
+  // walking — which may be an unverified intermediate redirect hop (the SSRF
+  // walk aborted mid-chain). Refusing to fetch that URL is the only safe move:
+  // a partial walk + downstream fetch is functionally identical to having no
+  // SSRF guard at all for that request. Park the source with the precise
+  // upstream reason; timeout is retryable (transient), everything else is
+  // treated as permanent until DNS / network conditions change and the
+  // operator re-enables the source.
+  if (guard.status !== 'resolved' && guard.status !== 'no_redirect') {
+    const mappedStatus: 'timeout' | '4xx' = guard.status === 'timeout' ? 'timeout' : '4xx';
+    await ctx.db
+      .update(sources)
+      .set({
+        lastFetchedAt: new Date(),
+        lastFetchStatus: mappedStatus,
+        lastFetchError: shortError(`ssrf_guard_${guard.status}: ${guard.error ?? 'no detail'}`),
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.id, sourceId));
+    if (guard.status === 'timeout') throw transient(`ssrf_guard_timeout`);
+    throw permanent(`ssrf_guard_${guard.status}`);
+  }
+
   // On 'resolved' / 'no_redirect' the guard already verified each hop's IP;
-  // hand that terminus to the fetcher. On other non-blocked statuses
-  // (timeout, network_error, too_many_hops, invalid_input) finalUrl is the
-  // last URL we were trying — still safer than rebuilding the chain.
+  // hand that terminus to the fetcher.
   const fetchUrl = guard.finalUrl;
   const result = await fetchRssSource(fetchUrl, {
     maxItems: source.maxItemsPerFetch,

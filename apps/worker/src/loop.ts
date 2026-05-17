@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
-import { type AIProvider, YandexAIStudioDeepSeekProvider, parseAIEnv } from '@postdash/ai';
+import { type AIProvider, parseAIEnv } from '@postdash/ai';
 import type { Pool } from '@postdash/db';
 import { pollNextTask } from '@postdash/tasks';
 import { Dispatcher, type TaskHandlerCtx } from './dispatcher.js';
@@ -46,11 +46,12 @@ export class WorkerLoop {
   private readonly workerId: string;
   /**
    * Force-refresh hook for the IAM token cache the active provider consults.
-   * Resolved once at construction time when the provider is Yandex; left
-   * undefined for TemplateProvider (refresh_iam_token handler treats undefined
-   * as a no-op). Pinning the hook here — instead of letting each task look it
-   * up — ensures we operate on THE single IAMTokenCache instance, not a
-   * sibling whose state diverges via system_state writethrough.
+   * Resolved once at construction time via the optional `AIProvider.iamRefresh`
+   * seam — providers without IAM caching (TemplateProvider) leave the method
+   * undefined and refresh_iam_token handler treats undefined as a no-op.
+   * Pinning the hook here — instead of letting each task look it up — ensures
+   * we operate on THE single IAMTokenCache instance, not a sibling whose
+   * state diverges via system_state writethrough.
    */
   private readonly iamRefresh: (() => Promise<void>) | undefined;
   /**
@@ -62,11 +63,9 @@ export class WorkerLoop {
 
   constructor(private readonly opts: WorkerLoopOptions) {
     this.workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
-    if (opts.ai instanceof YandexAIStudioDeepSeekProvider) {
-      const cache = opts.ai.iamToken;
-      this.iamRefresh = async () => {
-        await cache.forceRefresh();
-      };
+    if (typeof opts.ai.iamRefresh === 'function') {
+      const refreshFn = opts.ai.iamRefresh.bind(opts.ai);
+      this.iamRefresh = refreshFn;
     } else {
       this.iamRefresh = undefined;
     }

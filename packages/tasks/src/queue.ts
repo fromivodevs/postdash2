@@ -247,72 +247,72 @@ export async function failTask(
   taskId: string,
   err: FailInput,
   workerId: string,
+  /**
+   * Current attempts count on the leased task (the value returned by
+   * `pollNextTask`, after it incremented). Used to pre-compute backoff in
+   * JS so the UPDATE can stay a single statement.
+   */
+  currentAttempts: number,
   policy: RetryPolicy = DEFAULT_RETRY_POLICY,
 ): Promise<void> {
   // Truncate so the CHECK constraint (length ≤ 200) doesn't reject the UPDATE.
   const safeError = err.message.length > 200 ? err.message.slice(0, 200) : err.message;
 
-  // Look up current attempts to decide retry vs final. One read is cheap;
-  // doing it in the UPDATE expression requires a CASE-rich statement that's
-  // harder to read. Guarded by locked_by so a lost-lease read still reports
-  // the right exhaustion state for THIS worker.
-  const rows = (await client`
-    SELECT attempts, max_attempts FROM tasks
+  // attempts has already been incremented by pollNextTask. Compute backoff in
+  // JS so the UPDATE stays a single statement (CASE-rich SQL is harder to
+  // read than the two-branch JS truth-table). The backoff index is
+  // (attempts - 1): the first retry (attempts=1) uses backoffSeconds[0]=10s.
+  const isPermanent = err.kind === 'permanent';
+  const backoffIndex = Math.min(Math.max(0, currentAttempts - 1), policy.backoffSeconds.length - 1);
+  const backoffSec = policy.backoffSeconds[backoffIndex] ?? 60;
+
+  // Single lease-guarded UPDATE. The CASE branches mirror the JS truth-table:
+  //   permanent OR attempts >= max  → 'failed_permanent', completed_at=now()
+  //   else                          → 'pending', scheduled_at=now()+backoff
+  // RETURNING surfaces the chosen branch via the `exhausted` flag so the
+  // matching task_runs UPDATE can pick the right status without a second
+  // round-trip to decide. `attempts >= max_attempts` is repeated in SQL (not
+  // pre-computed in JS) so the snapshot stays atomic with the UPDATE — if a
+  // janitor reset bumped attempts between the JS read and the UPDATE, SQL
+  // sees the latest value.
+  const result = (await client`
+    UPDATE tasks SET
+      status = CASE
+        WHEN ${isPermanent}::boolean THEN 'failed_permanent'
+        WHEN attempts >= max_attempts THEN 'failed_permanent'
+        ELSE 'pending'
+      END,
+      scheduled_at = CASE
+        WHEN ${isPermanent}::boolean THEN scheduled_at
+        WHEN attempts >= max_attempts THEN scheduled_at
+        ELSE now() + (${backoffSec}::int * interval '1 second')
+      END,
+      locked_by = NULL,
+      locked_until = NULL,
+      last_error = ${safeError},
+      updated_at = now(),
+      completed_at = CASE
+        WHEN ${isPermanent}::boolean OR attempts >= max_attempts THEN now()
+        ELSE NULL
+      END
     WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
-  `) as Array<{ attempts: number; max_attempts: number }>;
-  const row = rows[0];
-  if (!row) {
+    RETURNING attempts, max_attempts, (status = 'failed_permanent') AS exhausted
+  `) as Array<{ attempts: number; max_attempts: number; exhausted: boolean }>;
+
+  if (result.length === 0) {
     // Lost lease (or task already terminal). The new lease-holder will drive
     // it; this worker no longer owns the transition.
     console.warn(`[tasks] failTask: lost lease for task=${taskId} worker=${workerId}`);
     return;
   }
 
-  const exhausted = row.attempts >= row.max_attempts;
-  const finalStatus = err.kind === 'permanent' || exhausted ? 'failed_permanent' : 'pending';
-
-  let updated: Array<{ id: string }>;
-  if (finalStatus === 'pending') {
-    const backoffIndex = Math.min(row.attempts - 1, policy.backoffSeconds.length - 1);
-    // attempts has already been incremented by pollNextTask; backoff index is
-    // (attempts - 1) so first retry uses backoffSeconds[0].
-    const backoffSec = policy.backoffSeconds[Math.max(0, backoffIndex)] ?? 60;
-    updated = (await client`
-      UPDATE tasks SET
-        status = 'pending',
-        scheduled_at = now() + (${backoffSec}::int * interval '1 second'),
-        locked_by = NULL,
-        locked_until = NULL,
-        last_error = ${safeError},
-        updated_at = now()
-      WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
-      RETURNING id
-    `) as Array<{ id: string }>;
-  } else {
-    updated = (await client`
-      UPDATE tasks SET
-        status = 'failed_permanent',
-        completed_at = now(),
-        locked_by = NULL,
-        locked_until = NULL,
-        last_error = ${safeError},
-        updated_at = now()
-      WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
-      RETURNING id
-    `) as Array<{ id: string }>;
-  }
-
-  if (updated.length === 0) {
-    console.warn(
-      `[tasks] failTask: lost lease during UPDATE for task=${taskId} worker=${workerId}`,
-    );
-    return;
-  }
-
+  const exhausted = result[0]!.exhausted;
+  // task_runs UPDATE is also lease-guarded so a lost-lease re-run by the new
+  // owner can't be overwritten by this worker's terminal status.
   await client`
     UPDATE task_runs SET
       finished_at = now(),
-      status = ${finalStatus === 'pending' ? 'failed' : 'failed_permanent'},
+      status = ${exhausted ? 'failed_permanent' : 'failed'},
       error_message = ${safeError}
     WHERE task_id = ${taskId} AND finished_at IS NULL AND worker_id = ${workerId}
   `;

@@ -88,6 +88,7 @@ export class Dispatcher {
           message: `no handler for ${task.type}`,
         },
         task.lockedBy,
+        task.attempts,
       );
       return;
     }
@@ -110,7 +111,7 @@ export class Dispatcher {
       const message = err instanceof Error ? err.message : String(err);
       childLogger.warn({ kind, err: message }, 'task failed');
       try {
-        await failTask(pool.client, task.id, { kind, message }, task.lockedBy);
+        await failTask(pool.client, task.id, { kind, message }, task.lockedBy, task.attempts);
       } catch (failErr) {
         childLogger.error({ err: failErr }, 'failTask itself failed; task may be stuck');
       }

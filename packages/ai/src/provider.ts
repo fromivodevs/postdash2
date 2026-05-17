@@ -123,4 +123,14 @@ export interface AIProvider {
   generateDraft(input: DraftInput): Promise<DraftOutput>;
   rewriteDraft(input: RewriteInput): Promise<DraftOutput | DraftOutput[]>;
   embed(input: EmbedInput): Promise<EmbedOutput>;
+  /**
+   * Optional force-refresh hook for providers with IAM-token caching. The
+   * worker's `refresh_iam_token` handler invokes this when present; providers
+   * without an IAM cache (e.g. TemplateProvider) leave it undefined and the
+   * handler treats that as a no-op. Keeping the seam optional on the
+   * interface — instead of `instanceof YandexAIStudioDeepSeekProvider` in
+   * loop.ts — preserves "ai is an adapter" without leaking provider classes
+   * into orchestration code.
+   */
+  iamRefresh?(): Promise<void>;
 }

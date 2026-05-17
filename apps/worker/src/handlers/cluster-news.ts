@@ -230,11 +230,26 @@ async function recomputeCluster(tx: TxClient, clusterId: string): Promise<void> 
  * both so this helper survives a future driver upgrade or per-call type tag.
  */
 function parseEmbedding(value: number[] | string): number[] {
-  if (Array.isArray(value)) return value;
-  const trimmed = value.trim();
-  const inner = trimmed.startsWith('[') && trimmed.endsWith(']') ? trimmed.slice(1, -1) : trimmed;
-  if (inner.length === 0) return [];
-  return inner.split(',').map((s) => Number(s));
+  let arr: number[];
+  if (Array.isArray(value)) {
+    arr = value;
+  } else {
+    const trimmed = value.trim();
+    const inner = trimmed.startsWith('[') && trimmed.endsWith(']') ? trimmed.slice(1, -1) : trimmed;
+    arr = inner.length === 0 ? [] : inner.split(',').map((s) => Number(s));
+  }
+  // The vector gets inlined verbatim into the unsafe-SQL vectorLiteral() call.
+  // A NaN or Infinity from a corrupted DB read (or a future driver upgrade
+  // that returns sparse-NaN representations) would render as `NaN`/`Infinity`
+  // literals inside the pgvector cast and crash the query with a confusing
+  // planner-side error. Validate eagerly so the failure is attributed to the
+  // bad embedding, not to the SQL that consumes it.
+  for (const v of arr) {
+    if (!Number.isFinite(v)) {
+      throw permanent(`embedding contains non-finite value (corrupted DB read)`);
+    }
+  }
+  return arr;
 }
 
 function permanent(message: string): Error {

@@ -5,8 +5,8 @@
  *   - **fast tick (1/min)** — enqueue `fetch_source` for every source whose
  *     `last_fetched_at + fetch_interval_minutes < now()` (or NULL = never fetched).
  *     Idempotent via the partial unique index `tasks_unique_active_fetch_per_source`:
- *     INSERT ... ON CONFLICT DO NOTHING collapses duplicates when scheduler
- *     fires twice within one fetch_interval.
+ *     INSERT ... ON CONFLICT (source_id) WHERE ... DO NOTHING collapses
+ *     duplicates when scheduler fires twice within one fetch_interval.
  *   - **slow tick (5/min)** — enqueue housekeeping tasks: janitor (release
  *     stuck running tasks) and refresh_iam_token if expiry < 1h away.
  *
@@ -106,31 +106,52 @@ export class Scheduler {
   async fastTick(): Promise<{ enqueued: number }> {
     let enqueued = 0;
     try {
-      const due = (await this.opts.db.execute(sql`
-        SELECT id FROM sources
-        WHERE type = 'rss'
-          AND (
-            (status = 'active' AND (
-              last_fetched_at IS NULL
-              OR last_fetched_at + (fetch_interval_minutes * interval '1 minute') < now()
-            ))
-            OR
-            (status = 'error' AND (
-              last_fetched_at IS NULL
-              OR last_fetched_at + interval '60 minutes' < now()
-            ))
-          )
+      // Single-statement bulk enqueue. The previous loop did N+1 round-trips
+      // (one SELECT + N INSERTs); at ~hundreds of due sources per tick the
+      // RTT cost dominated the tick. The CTE-then-INSERT collapses that to
+      // one statement and preserves the anti-dupe semantics via the existing
+      // partial UNIQUE `tasks_unique_active_fetch_per_source` (defined in
+      // 0005_phase4.sql). LIMIT 500 caps the per-tick batch — if more than
+      // 500 are due, the next tick (1 minute later) picks up the remainder;
+      // this bounds the worst-case INSERT footprint and the tail latency of
+      // any single tick.
+      //
+      // The ON CONFLICT clause names the partial-index target explicitly
+      // (`(source_id) WHERE type='fetch_source' AND status IN (...)`) instead
+      // of the looser unqualified `ON CONFLICT DO NOTHING`. Behaviour is
+      // identical for this row shape, but the explicit target lets the
+      // planner pick the exact partial unique without enumerating every
+      // tasks-table constraint — same hint as `ON CONFLICT (col) WHERE ...`
+      // upserts elsewhere in the codebase.
+      const inserted = (await this.opts.db.execute(sql`
+        WITH due AS (
+          SELECT id FROM sources
+          WHERE type = 'rss'
+            AND (
+              (status = 'active' AND (
+                last_fetched_at IS NULL
+                OR last_fetched_at + (fetch_interval_minutes * interval '1 minute') < now()
+              ))
+              OR
+              (status = 'error' AND (
+                last_fetched_at IS NULL
+                OR last_fetched_at + interval '60 minutes' < now()
+              ))
+            )
+          LIMIT 500
+        )
+        INSERT INTO tasks (type, priority, source_id, payload, status, scheduled_at)
+        SELECT 'fetch_source', 40, id, '{}'::jsonb, 'pending', now()
+        FROM due
+        ON CONFLICT (source_id) WHERE type = 'fetch_source' AND status IN ('pending', 'running') DO NOTHING
+        RETURNING id
       `)) as Array<{ id: string }>;
-      for (const row of due) {
-        const r = await enqueueTask(this.opts.db, {
-          type: 'fetch_source',
-          sourceId: row.id,
-        });
-        if (r.created) enqueued += 1;
-      }
-      if (enqueued > 0) {
-        this.opts.logger.info({ enqueued, due: due.length }, 'scheduler fastTick enqueued fetches');
-      }
+      enqueued = inserted.length;
+      // Always emit fastTick heartbeat (even when enqueued=0) so ops can grep
+      // for last-success timestamp — Phase 4 has no /health endpoint yet
+      // (Phase 8 follow-up), so this log line is the only signal that the
+      // scheduler is alive. See apps/worker/RUNBOOK.md.
+      this.opts.logger.info({ enqueued, tick: 'fast' }, 'scheduler fastTick complete');
     } catch (err) {
       this.opts.logger.error({ err }, 'scheduler fastTick failed');
     }
@@ -160,6 +181,12 @@ export class Scheduler {
         const r = await enqueueTask(this.opts.db, { type: 'refresh_iam_token' });
         iamRefreshEnqueued = r.created;
       }
+      // Same heartbeat pattern as fastTick — single log line per tick so ops
+      // can confirm the slow scheduler is alive without a /health endpoint.
+      this.opts.logger.info(
+        { janitorEnqueued, iamRefreshEnqueued, tick: 'slow' },
+        'scheduler slowTick complete',
+      );
     } catch (err) {
       this.opts.logger.error({ err }, 'scheduler slowTick failed');
     }

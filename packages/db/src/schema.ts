@@ -510,6 +510,14 @@ export const systemState = pgTable(
     index('system_state_expires_at_idx')
       .on(t.expiresAt)
       .where(sql`${t.expiresAt} IS NOT NULL`),
+    // Allowlist for `key`: today only `ya_iam_token` is ever written (by
+    // packages/ai/iam-token.ts via the worker's IAMTokenStore adapter). The
+    // CHECK keeps additions a deliberate migration step instead of letting
+    // system_state drift into a generic kv table. Extending the list requires
+    // an ALTER TABLE migration AND a matching update here — schema.ts <->
+    // migration parity is non-negotiable. Mirrors system_state_key_allowlist
+    // in 0007_phase4_perf_security.sql.
+    check('system_state_key_allowlist', sql`${t.key} IN ('ya_iam_token')`),
   ],
 );
 
@@ -556,9 +564,13 @@ export const tasks = pgTable(
       'tasks_last_error_length_check',
       sql`${t.lastError} IS NULL OR length(${t.lastError}) <= 200`,
     ),
-    index('tasks_polling_idx')
-      .on(t.status, t.scheduledAt, t.priority)
-      .where(sql`${t.status} = 'pending'`),
+    // Phase 4 perf (migration 0007): the polling index is `(priority DESC,
+    // scheduled_at ASC) WHERE status='pending'` — column ordering that
+    // matches the ORDER BY in pollNextTask exactly. Drizzle's `.on()` builder
+    // does not preserve per-column sort direction in the partial-index form
+    // used here, so the index lives ONLY in 0007_phase4_perf_security.sql.
+    // Schema parity remains via the migration source-of-truth convention
+    // (same as the ivfflat note below).
     index('tasks_stuck_running_idx')
       .on(t.lockedUntil)
       .where(sql`${t.status} = 'running'`),
@@ -589,6 +601,11 @@ export const tasks = pgTable(
     // 0006_phase4_hardening.sql — same convention as the ivfflat note above.
     // Adding new expression-based indexes? Add them to the migration AND mention
     // them here so schema readers know to look at the migration too.
+    //
+    // Phase 4 perf+security (migration 0007): same pattern — partial UNIQUE
+    // on `(payload->>'news_item_id')` for `cluster_news`, plus a re-created
+    // `tasks_polling_idx` with `(priority DESC, scheduled_at ASC)` column
+    // order that matches the polling ORDER BY exactly.
   ],
 );
 
