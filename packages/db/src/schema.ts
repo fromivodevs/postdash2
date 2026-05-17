@@ -339,9 +339,18 @@ export const topicProfiles = pgTable(
       .references(() => workspaces.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     language: text('language').notNull(),
-    mainTopics: text('main_topics').array().notNull().default(sql`'{}'::text[]`),
-    keywords: text('keywords').array().notNull().default(sql`'{}'::text[]`),
-    negativeKeywords: text('negative_keywords').array().notNull().default(sql`'{}'::text[]`),
+    mainTopics: text('main_topics')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    keywords: text('keywords')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    negativeKeywords: text('negative_keywords')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     toneProfile: jsonb('tone_profile'),
     // pgvector(256) — Yandex text-search-doc output dim.
     // NULL until Phase 4 recompute_topic_embedding task fills it.
@@ -431,7 +440,9 @@ export const workspaceSourceSubscriptions = pgTable(
     }),
     enabled: boolean('enabled').notNull().default(true),
     priority: integer('priority').notNull().default(50),
-    customRules: jsonb('custom_rules').notNull().default(sql`'{}'::jsonb`),
+    customRules: jsonb('custom_rules')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
@@ -439,11 +450,7 @@ export const workspaceSourceSubscriptions = pgTable(
     // UNIQUE includes topic_profile_id so multi-profile per (workspace, source)
     // works in Phase 5+. MVP single-profile UX upserts on (workspace, source)
     // WHERE topic_profile_id IS NULL in the application layer.
-    unique('workspace_source_subscriptions_unique').on(
-      t.workspaceId,
-      t.sourceId,
-      t.topicProfileId,
-    ),
+    unique('workspace_source_subscriptions_unique').on(t.workspaceId, t.sourceId, t.topicProfileId),
     check(
       'workspace_source_subscriptions_priority_check',
       sql`${t.priority} >= 0 AND ${t.priority} <= 100`,

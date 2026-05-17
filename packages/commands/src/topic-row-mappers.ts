@@ -82,7 +82,8 @@ export function rowToSource(row: {
     maxItemsPerFetch: row.maxItemsPerFetch,
     reliabilityScore: row.reliabilityScore,
     lastFetchedAt: row.lastFetchedAt,
-    lastFetchStatus: row.lastFetchStatus === null ? null : narrowSourceFetchStatus(row.lastFetchStatus),
+    lastFetchStatus:
+      row.lastFetchStatus === null ? null : narrowSourceFetchStatus(row.lastFetchStatus),
     lastFetchError: row.lastFetchError,
     canonicalizationRuleVersion: row.canonicalizationRuleVersion,
     status: narrowSourceStatus(row.status),

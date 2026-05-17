@@ -192,7 +192,10 @@ describe('createSource', () => {
 
   it('does not block source creation when redirect resolution fails (fallback to input URL)', async () => {
     const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://offline.example/' });
-    const fresh = { ...sourceRow({ url: 'https://offline.example/', canonicalUrl: 'https://offline.example/' }), inserted: true };
+    const fresh = {
+      ...sourceRow({ url: 'https://offline.example/', canonicalUrl: 'https://offline.example/' }),
+      inserted: true,
+    };
     const freshSub = { ...subscriptionRow(), inserted: true };
     const mock = makeMockDb({
       selectResults: [policyOk('editor')],
@@ -278,7 +281,12 @@ describe('createSource: bulk add (20 sources sequentially)', () => {
     for (let i = 0; i < N; i++) {
       selectScript.push(policyOk('editor'));
       insertScript.push(
-        [{ ...sourceRow({ id: `source-${i}`, canonicalUrl: `https://feed-${i}.example/rss` }), inserted: true }],
+        [
+          {
+            ...sourceRow({ id: `source-${i}`, canonicalUrl: `https://feed-${i}.example/rss` }),
+            inserted: true,
+          },
+        ],
         [{ ...subscriptionRow({ id: `sub-${i}`, sourceId: `source-${i}` }), inserted: true }],
         [], // operation_log
       );

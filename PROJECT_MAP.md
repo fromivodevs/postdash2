@@ -163,7 +163,7 @@
 См. `ARCHITECTURE.md`.
 
 - `architecture/channel-connection.md` — Phase 2 channel-connection system. *Active.* 3 DB tables, 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (33 tests), 4-state Mini App screen. Closed tag: `phase-2-perfect`.
-- `architecture/topics-and-sources.md` — Phase 3 topics + sources. *Active.* 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), 4 topic commands + 4 source commands, `canonicalize` + `resolveRedirect` in `@postdash/sources`, 8 REST endpoints, 3 Mini App screens (Settings/Sources/AddSource). Closes with `phase-3-perfect`.
+- `architecture/topics-and-sources.md` — Phase 3 topics + sources. *Active.* 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), 4 topic commands + 4 source commands, `canonicalize` + `resolveRedirect` in `@postdash/sources`, 8 REST endpoints, 3 Mini App screens (Settings/Sources/AddSource). Latest closure `phase-3-perfect-r8`.
 
 ## Recent changes (last 10)
 

@@ -6,10 +6,7 @@
  */
 
 import { apiFetch } from './client.ts';
-import type {
-  SourceSubscriptionListProjection,
-  SourceSubscriptionProjection,
-} from './types.ts';
+import type { SourceSubscriptionListProjection, SourceSubscriptionProjection } from './types.ts';
 
 export interface PostSourceInput {
   url: string;
@@ -55,15 +52,12 @@ export function patchSource(
   patch: PatchSourceInput,
   signal?: AbortSignal,
 ): Promise<SourceSubscriptionProjection> {
-  return apiFetch<SourceSubscriptionProjection>(
-    `/sources/${encodeURIComponent(sourceId)}`,
-    {
-      method: 'PATCH',
-      initData,
-      json: patch,
-      ...(signal ? { signal } : {}),
-    },
-  );
+  return apiFetch<SourceSubscriptionProjection>(`/sources/${encodeURIComponent(sourceId)}`, {
+    method: 'PATCH',
+    initData,
+    json: patch,
+    ...(signal ? { signal } : {}),
+  });
 }
 
 export function deleteSource(

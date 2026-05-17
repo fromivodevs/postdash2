@@ -175,9 +175,7 @@ export function SourcesScreen(): ReactNode {
           <SourceCell
             key={item.subscription_id}
             item={item}
-            onToggle={(enabled) =>
-              toggleMutation.mutate({ sourceId: item.source.id, enabled })
-            }
+            onToggle={(enabled) => toggleMutation.mutate({ sourceId: item.source.id, enabled })}
             onDelete={() => setDeleteCandidate(item)}
             toggling={isRowToggling(item.source.id, pendingToggleSourceId)}
             deleting={isRowDeleting(item.source.id, pendingDeleteSourceId)}

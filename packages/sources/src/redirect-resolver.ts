@@ -80,7 +80,11 @@ const BLOCKED_IPV4_CIDRS: Array<{ network: number; mask: number; label: string }
   { network: 0x0a000000, mask: 0xff000000, label: 'RFC1918 10.0.0.0/8' },
   { network: 0xac100000, mask: 0xfff00000, label: 'RFC1918 172.16.0.0/12' },
   { network: 0xc0a80000, mask: 0xffff0000, label: 'RFC1918 192.168.0.0/16' },
-  { network: 0xa9fe0000, mask: 0xffff0000, label: 'link-local 169.254.0.0/16 (incl. cloud metadata)' },
+  {
+    network: 0xa9fe0000,
+    mask: 0xffff0000,
+    label: 'link-local 169.254.0.0/16 (incl. cloud metadata)',
+  },
   { network: 0x00000000, mask: 0xff000000, label: '0.0.0.0/8' },
 ];
 
@@ -262,9 +266,7 @@ async function checkDnsStability(
     // landed on them mid-fetch). Reject only if a new IP is private.
     for (const ip of after) {
       if (!snapshot.resolvedIps.includes(ip)) {
-        const check = isBlockedIpv4(ip).blocked
-          ? isBlockedIpv4(ip)
-          : isBlockedIpv6(ip);
+        const check = isBlockedIpv4(ip).blocked ? isBlockedIpv4(ip) : isBlockedIpv6(ip);
         if (check.blocked) {
           return {
             stable: false,
@@ -314,7 +316,8 @@ async function checkUrlNotPrivate(
     try {
       const records = await dnsLookup(host);
       for (const record of records) {
-        const check = record.family === 6 ? isBlockedIpv6(record.address) : isBlockedIpv4(record.address);
+        const check =
+          record.family === 6 ? isBlockedIpv6(record.address) : isBlockedIpv4(record.address);
         if (check.blocked) {
           return { ok: false, reason: `DNS resolved to private/internal IP: ${check.reason}` };
         }
@@ -442,7 +445,12 @@ export async function resolveRedirect(
   if (!skipSsrfCheck) {
     const initialCheck = await checkUrlNotPrivate(currentUrl, dnsLookup);
     if (!initialCheck.ok) {
-      return { finalUrl: currentUrl, status: 'blocked_private_ip', hops: 0, error: initialCheck.reason };
+      return {
+        finalUrl: currentUrl,
+        status: 'blocked_private_ip',
+        hops: 0,
+        error: initialCheck.reason,
+      };
     }
     currentSnapshot = initialCheck.snapshot;
   }

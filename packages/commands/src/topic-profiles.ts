@@ -406,7 +406,10 @@ async function loadOwnedProfile(
     // safest signal is not_found — but the route layer maps both to a
     // generic message anyway, so we pick forbidden here for accurate
     // server-side logging.
-    throw new CommandError('forbidden', `topic_profile ${topicProfileId} belongs to a different workspace`);
+    throw new CommandError(
+      'forbidden',
+      `topic_profile ${topicProfileId} belongs to a different workspace`,
+    );
   }
   return { id: row.id };
 }

@@ -42,7 +42,9 @@ describe('selectSourcesView', () => {
 
   it('null/undefined items → empty', () => {
     expect(selectSourcesView({ loading: false, errored: false, items: null }).kind).toBe('empty');
-    expect(selectSourcesView({ loading: false, errored: false, items: undefined }).kind).toBe('empty');
+    expect(selectSourcesView({ loading: false, errored: false, items: undefined }).kind).toBe(
+      'empty',
+    );
   });
 
   it('zero items → empty', () => {

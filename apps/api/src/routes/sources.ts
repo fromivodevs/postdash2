@@ -88,7 +88,9 @@ export async function sourcesRoute(app: FastifyInstance, deps: SourcesRouteDeps)
         });
         void reply
           .status(200)
-          .send(projectSourceSubscription({ subscription: result.subscription, source: result.source }));
+          .send(
+            projectSourceSubscription({ subscription: result.subscription, source: result.source }),
+          );
         return undefined as never;
       } catch (err) {
         return handleCommandError(req, reply, err, 'createSource');

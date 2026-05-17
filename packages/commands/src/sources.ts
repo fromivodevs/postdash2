@@ -43,7 +43,13 @@ import { rowToSource, rowToSubscription } from './topic-row-mappers.js';
  */
 async function logSourceAction(
   tx: DbOrTx,
-  args: { workspaceId: string; userId: string; commandType: string; objectId: string; payload?: Record<string, unknown> },
+  args: {
+    workspaceId: string;
+    userId: string;
+    commandType: string;
+    objectId: string;
+    payload?: Record<string, unknown>;
+  },
 ): Promise<void> {
   await writeOperationLog(tx, {
     workspaceId: args.workspaceId,
@@ -183,7 +189,8 @@ export async function createSource(
         .for('share')
         .limit(1);
       const owner = ownerRow[0];
-      if (!owner) throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
+      if (!owner)
+        throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
       if (owner.workspaceId !== data.workspaceId) {
         throw new CommandError(
           'forbidden',
@@ -191,11 +198,9 @@ export async function createSource(
         );
       }
       if (owner.status !== 'active') {
-        throw new CommandError(
-          'conflict',
-          `topic_profile ${data.topicProfileId} is not active`,
-          { code: 'topic_profile_disabled' },
-        );
+        throw new CommandError('conflict', `topic_profile ${data.topicProfileId} is not active`, {
+          code: 'topic_profile_disabled',
+        });
       }
     }
 
@@ -267,7 +272,18 @@ export async function createSource(
     const topicProfileId = data.topicProfileId ?? null;
     let subscriptionCreated: boolean;
     let subscriptionRow:
-      | { id: string; workspaceId: string; sourceId: string; topicProfileId: string | null; enabled: boolean; priority: number; customRules: unknown; createdAt: Date; updatedAt: Date; inserted?: boolean }
+      | {
+          id: string;
+          workspaceId: string;
+          sourceId: string;
+          topicProfileId: string | null;
+          enabled: boolean;
+          priority: number;
+          customRules: unknown;
+          createdAt: Date;
+          updatedAt: Date;
+          inserted?: boolean;
+        }
       | undefined;
 
     if (topicProfileId === null) {
@@ -286,10 +302,7 @@ export async function createSource(
           customRules: {},
         })
         .onConflictDoUpdate({
-          target: [
-            workspaceSourceSubscriptions.workspaceId,
-            workspaceSourceSubscriptions.sourceId,
-          ],
+          target: [workspaceSourceSubscriptions.workspaceId, workspaceSourceSubscriptions.sourceId],
           targetWhere: sql`${workspaceSourceSubscriptions.topicProfileId} IS NULL`,
           // Re-enable on re-add (UX: paused → active).
           set: { enabled: true, updatedAt: new Date() },
@@ -402,7 +415,8 @@ export async function updateSourceSubscription(
         .for('share')
         .limit(1);
       const owner = ownerRow[0];
-      if (!owner) throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
+      if (!owner)
+        throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
       if (owner.workspaceId !== data.workspaceId) {
         throw new CommandError(
           'forbidden',
@@ -410,11 +424,9 @@ export async function updateSourceSubscription(
         );
       }
       if (owner.status !== 'active') {
-        throw new CommandError(
-          'conflict',
-          `topic_profile ${data.topicProfileId} is not active`,
-          { code: 'topic_profile_disabled' },
-        );
+        throw new CommandError('conflict', `topic_profile ${data.topicProfileId} is not active`, {
+          code: 'topic_profile_disabled',
+        });
       }
     }
 

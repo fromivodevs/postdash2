@@ -19,11 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { getWebApp } from '../telegram/webapp.ts';
-import {
-  isFormDirty,
-  projectionToFormState,
-  validateSettingsForm,
-} from './settingsView.ts';
+import { isFormDirty, projectionToFormState, validateSettingsForm } from './settingsView.ts';
 import {
   Button,
   ErrorState,

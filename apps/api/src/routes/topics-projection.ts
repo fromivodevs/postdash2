@@ -44,9 +44,7 @@ export function projectSourceSubscription(input: {
       canonical_url: input.source.canonicalUrl,
       name: input.source.name,
       fetch_interval_minutes: input.source.fetchIntervalMinutes,
-      last_fetched_at: input.source.lastFetchedAt
-        ? input.source.lastFetchedAt.toISOString()
-        : null,
+      last_fetched_at: input.source.lastFetchedAt ? input.source.lastFetchedAt.toISOString() : null,
       last_fetch_status: input.source.lastFetchStatus,
       last_fetch_error: input.source.lastFetchError,
       status: input.source.status,
