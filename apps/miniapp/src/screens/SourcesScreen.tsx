@@ -15,6 +15,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { useState, type ReactNode } from 'react';
 import {
+  formatLastFetched,
+  isRowDeleting,
+  isRowToggling,
+  selectSourcesView,
+} from './sourcesView.ts';
+import {
   Button,
   Cell,
   ConfirmModal,
@@ -107,7 +113,16 @@ export function SourcesScreen(): ReactNode {
     },
   });
 
-  if (sourcesQuery.isLoading) {
+  // Pure view-model selector (tested in sourcesView.test.ts) — replaces the
+  // four-state inline branching with a single discriminated union the JSX
+  // dispatches on. Keeps the dispatch tight + the logic test-covered.
+  const view = selectSourcesView({
+    loading: sourcesQuery.isLoading,
+    errored: sourcesQuery.isError,
+    items: sourcesQuery.data?.items,
+  });
+
+  if (view.kind === 'loading') {
     // §6 Skeleton-first for list views — three placeholder cells with the
     // shape of a real SourceCell give the user a clearer "loading" cue than
     // a centered Spinner and prevent layout shift when content arrives.
@@ -125,7 +140,7 @@ export function SourcesScreen(): ReactNode {
     );
   }
 
-  if (sourcesQuery.isError) {
+  if (view.kind === 'error') {
     return (
       <Section header="Источники">
         <ErrorState error={sourcesQuery.error} onRetry={() => void sourcesQuery.refetch()} />
@@ -133,9 +148,7 @@ export function SourcesScreen(): ReactNode {
     );
   }
 
-  const items = sourcesQuery.data?.items ?? [];
-
-  if (items.length === 0) {
+  if (view.kind === 'empty') {
     return (
       <Section header="Источники">
         <Placeholder
@@ -158,7 +171,7 @@ export function SourcesScreen(): ReactNode {
   return (
     <Section header="Источники">
       <List>
-        {items.map((item) => (
+        {view.items.map((item) => (
           <SourceCell
             key={item.subscription_id}
             item={item}
@@ -166,8 +179,8 @@ export function SourcesScreen(): ReactNode {
               toggleMutation.mutate({ sourceId: item.source.id, enabled })
             }
             onDelete={() => setDeleteCandidate(item)}
-            toggling={pendingToggleSourceId === item.source.id}
-            deleting={pendingDeleteSourceId === item.source.id}
+            toggling={isRowToggling(item.source.id, pendingToggleSourceId)}
+            deleting={isRowDeleting(item.source.id, pendingDeleteSourceId)}
           />
         ))}
       </List>
@@ -213,9 +226,10 @@ interface SourceCellProps {
 }
 
 function SourceCell({ item, onToggle, onDelete, toggling, deleting }: SourceCellProps): ReactNode {
-  const fetched = item.source.last_fetched_at
-    ? new Date(item.source.last_fetched_at).toLocaleString('ru-RU')
-    : 'пока не проверялся';
+  // formatLastFetched is the same logic the test covers — keeps the JSX
+  // free of locale + null-handling concerns and means a future timezone
+  // tweak lands in one place.
+  const fetched = formatLastFetched(item.source.last_fetched_at);
   return (
     <Cell
       subtitle={

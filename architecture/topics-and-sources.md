@@ -83,15 +83,17 @@ The `createTopicProfile` command checks at write time: if an active profile alre
 - `packages/sources/src/__tests__/redirect-resolver.test.ts` — 22 cases (mock fetch, max-hop, timeout, HEAD-405 GET fallback, relative location, plus SSRF defence: loopback, AWS metadata, RFC1918, IPv6 ::1, IPv4-mapped, IPv4-compat, multi-record mixed-private).
 - `packages/domain/src/topic.ts` — pure types: `TopicProfile`, `TopicProfileLanguage`, narrowers.
 - `packages/domain/src/source.ts` — `Source`, `SourceType`, `SourceStatus`, `WorkspaceSourceSubscription`, narrowers.
-- `packages/commands/src/topic-profiles.ts` — consolidated module: `createTopicProfile` (upsert + 23505-retry), `updateTopicProfile`, `deleteTopicProfile` (soft-delete), `listTopicProfiles`. All write `operation_log` (Rule 6). `validateToneProfileDepth` for JSON-bomb defence.
-- `packages/commands/src/sources.ts` — consolidated module: `createSource` (resolve + canonicalize + ON CONFLICT global-source upsert + subscription upsert via partial unique index + topic-profile-active check), `updateSourceSubscription` (returns joined source for single-row PATCH), `deleteSourceSubscription`, `listSources`. All write `operation_log`. xmax-via-RETURNING for insert-vs-update.
+- `packages/commands/src/topic-profiles.ts` — consolidated module: `createTopicProfile` (upsert + 23505-retry), `updateTopicProfile`, `deleteTopicProfile` (soft-delete), `listTopicProfiles`. All write `operation_log` (Rule 6) via the shared helper. `validateToneProfileDepth` for JSON-bomb defence (depth 8, nodes 200 counting both object keys AND array elements).
+- `packages/commands/src/sources.ts` — consolidated module: `createSource` (resolve + canonicalize + ON CONFLICT global-source upsert + subscription upsert via partial unique index + topic-profile-active check with FOR SHARE), `updateSourceSubscription` (returns joined source for single-row PATCH), `deleteSourceSubscription`, `listSources`. All write `operation_log`. xmax-via-RETURNING for insert-vs-update.
+- `packages/commands/src/operation-log.ts` — shared `writeOperationLog` helper (single Rule 6 surface) + `redactUrlForLog` (drops query string before URLs reach error-message logs).
 - `packages/commands/src/topic-row-mappers.ts` — Phase 3 row → domain mappers.
 - `apps/api/src/routes/topics.ts` — CRUD endpoints.
 - `apps/api/src/routes/sources.ts` — CRUD endpoints. PATCH /sources projects from joined return — no second query.
 - `apps/api/src/routes/topics-projection.ts` — domain → wire projections.
-- `apps/miniapp/src/screens/SettingsScreen.tsx` — topic profile upsert form. MainButton wired (§4), FieldError for validation (§7).
-- `apps/miniapp/src/screens/SourcesScreen.tsx` — sources list + per-row toggle/delete pending state.
-- `apps/miniapp/src/screens/AddSourceScreen.tsx` — URL+type form. MainButton wired, inputMode=url, FieldError.
+- `apps/miniapp/src/screens/SettingsScreen.tsx` — topic profile upsert form. MainButton wired (§4), FieldError for validation (§7), closingConfirmation on dirty form (§13). Imports pure helpers from `settingsView.ts`.
+- `apps/miniapp/src/screens/SourcesScreen.tsx` — sources list + per-row toggle/delete pending state + DELETE confirmation modal + Skeleton-cell loading. Imports pure helpers from `sourcesView.ts`.
+- `apps/miniapp/src/screens/AddSourceScreen.tsx` — URL+type form. MainButton wired (visible: !isSuccess to close double-tap), inputMode=url, FieldError.
+- `apps/miniapp/src/screens/settingsView.ts` + `sourcesView.ts` — pure view-model helpers (form dirty-detection, validation, four-state selector, last-fetched formatting, per-row pending). Tested in isolation: 16 + 10 unit tests.
 - `apps/miniapp/src/api/topics.ts` + `apps/miniapp/src/api/sources.ts` — clients.
 - `packages/shared/src/topic-source-projection.ts` — wire schemas (Zod) shared between API + miniapp.
 
