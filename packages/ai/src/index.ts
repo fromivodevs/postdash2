@@ -1,13 +1,13 @@
 import { AIProviderError, type AIProvider } from './provider.js';
 import { TemplateProvider } from './providers/template.js';
 import { YandexAIStudioDeepSeekProvider } from './providers/yandex.js';
-import { IAMTokenCache } from './iam-token.js';
+import { IAMTokenCache, type IAMTokenStore } from './iam-token.js';
 import type { AIEnv } from './env.js';
 
 export * from './provider.js';
 export { TemplateProvider } from './providers/template.js';
 export { YandexAIStudioDeepSeekProvider } from './providers/yandex.js';
-export { IAMTokenCache } from './iam-token.js';
+export { IAMTokenCache, type IAMTokenStore, type IAMTokenCacheOptions } from './iam-token.js';
 export { aiEnvSchema, parseAIEnv, type AIEnv } from './env.js';
 
 /**
@@ -51,7 +51,14 @@ function looksLikePlaceholder(value: string): boolean {
  * mode. To intentionally ship template-only to prod, set
  * AI_FALLBACK_TO_TEMPLATE=true — this is the explicit opt-in.
  */
-export function createAIProvider(env: AIEnv): AIProvider {
+export interface CreateAIProviderOptions {
+  /** Cross-process IAM token store. Wired by the worker (system_state). */
+  iamStore?: IAMTokenStore;
+  /** Injectable fetch (tests). */
+  fetch?: typeof globalThis.fetch;
+}
+
+export function createAIProvider(env: AIEnv, opts: CreateAIProviderOptions = {}): AIProvider {
   const yandexFields: Array<[name: string, value: string]> = [
     ['YA_SA_KEY_JSON', env.YA_SA_KEY_JSON],
     ['YA_FOLDER_ID', env.YA_FOLDER_ID],
@@ -92,7 +99,11 @@ export function createAIProvider(env: AIEnv): AIProvider {
     return new TemplateProvider();
   }
 
-  return new YandexAIStudioDeepSeekProvider({
+  const iamOpts: { store?: IAMTokenStore; fetch?: typeof globalThis.fetch } = {};
+  if (opts.iamStore !== undefined) iamOpts.store = opts.iamStore;
+  if (opts.fetch !== undefined) iamOpts.fetch = opts.fetch;
+  const iamToken = new IAMTokenCache(env.YA_SA_KEY_JSON, iamOpts);
+  const yandexOpts: YandexCtorOpts = {
     folderId: env.YA_FOLDER_ID,
     llmModelUri: env.YA_LLM_MODEL_URI,
     embedDocModelUri: env.YA_EMBED_DOC_MODEL_URI,
@@ -100,6 +111,12 @@ export function createAIProvider(env: AIEnv): AIProvider {
     requestTimeoutMs: env.YA_LLM_REQUEST_TIMEOUT_MS,
     llmMaxTokens: env.YA_LLM_MAX_TOKENS,
     llmTemperature: env.YA_LLM_TEMPERATURE,
-    iamToken: new IAMTokenCache(env.YA_SA_KEY_JSON),
-  });
+    embeddingDim: env.AI_EMBEDDING_DIM,
+    iamToken,
+  };
+  if (opts.fetch !== undefined) yandexOpts.fetch = opts.fetch;
+  return new YandexAIStudioDeepSeekProvider(yandexOpts);
 }
+
+// Local alias to keep the optional `fetch` field exactOptionalPropertyTypes-safe.
+type YandexCtorOpts = ConstructorParameters<typeof YandexAIStudioDeepSeekProvider>[0];

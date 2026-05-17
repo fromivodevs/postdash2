@@ -491,3 +491,244 @@ export type SourceRow = typeof sources.$inferSelect;
 export type NewSourceRow = typeof sources.$inferInsert;
 export type WorkspaceSourceSubscriptionRow = typeof workspaceSourceSubscriptions.$inferSelect;
 export type NewWorkspaceSourceSubscriptionRow = typeof workspaceSourceSubscriptions.$inferInsert;
+
+// =============================================================================
+// Phase 4: task system + global news layer + embeddings + system_state.
+// See architecture/global-ingestion.md. Mirrors 0005_phase4.sql exactly —
+// schema.ts <-> migration parity is non-negotiable.
+// =============================================================================
+
+export const systemState = pgTable(
+  'system_state',
+  {
+    key: text('key').primaryKey(),
+    value: jsonb('value').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'date' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('system_state_expires_at_idx')
+      .on(t.expiresAt)
+      .where(sql`${t.expiresAt} IS NOT NULL`),
+  ],
+);
+
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    type: text('type').notNull(),
+    priority: integer('priority').notNull().default(50),
+    status: text('status').notNull().default('pending'),
+    payload: jsonb('payload')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+    sourceId: uuid('source_id').references(() => sources.id, { onDelete: 'cascade' }),
+    lockedBy: text('locked_by'),
+    lockedUntil: timestamp('locked_until', { withTimezone: true, mode: 'date' }),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'date' }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'tasks_type_check',
+      sql`${t.type} IN ('fetch_source', 'extract_news_item', 'embed_news_item', 'cluster_news', 'janitor_release_stuck_tasks', 'refresh_iam_token')`,
+    ),
+    check(
+      'tasks_status_check',
+      sql`${t.status} IN ('pending', 'running', 'completed', 'failed', 'failed_permanent', 'deferred', 'skipped_volume_cap', 'cancelled')`,
+    ),
+    check('tasks_priority_check', sql`${t.priority} >= 0 AND ${t.priority} <= 100`),
+    check('tasks_attempts_nonneg', sql`${t.attempts} >= 0`),
+    check('tasks_max_attempts_pos', sql`${t.maxAttempts} > 0`),
+    check(
+      'tasks_last_error_length_check',
+      sql`${t.lastError} IS NULL OR length(${t.lastError}) <= 200`,
+    ),
+    index('tasks_polling_idx')
+      .on(t.status, t.scheduledAt, t.priority)
+      .where(sql`${t.status} = 'pending'`),
+    index('tasks_stuck_running_idx')
+      .on(t.lockedUntil)
+      .where(sql`${t.status} = 'running'`),
+    index('tasks_source_status_idx')
+      .on(t.sourceId, t.status)
+      .where(sql`${t.sourceId} IS NOT NULL`),
+    index('tasks_workspace_status_idx')
+      .on(t.workspaceId, t.status)
+      .where(sql`${t.workspaceId} IS NOT NULL`),
+    // Partial UNIQUE — at most one active fetch_source per source. Closes
+    // edge case 9.3 (scheduler creating duplicate fetch tasks).
+    uniqueIndex('tasks_unique_active_fetch_per_source')
+      .on(t.sourceId)
+      .where(sql`${t.type} = 'fetch_source' AND ${t.status} IN ('pending', 'running')`),
+    uniqueIndex('tasks_unique_active_iam_refresh')
+      .on(t.type)
+      .where(sql`${t.type} = 'refresh_iam_token' AND ${t.status} IN ('pending', 'running')`),
+    uniqueIndex('tasks_unique_active_janitor')
+      .on(t.type)
+      .where(
+        sql`${t.type} = 'janitor_release_stuck_tasks' AND ${t.status} IN ('pending', 'running')`,
+      ),
+  ],
+);
+
+export const taskRuns = pgTable(
+  'task_runs',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    workerId: text('worker_id').notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true, mode: 'date' }),
+    status: text('status').notNull().default('running'),
+    errorMessage: text('error_message'),
+  },
+  (t) => [
+    check(
+      'task_runs_status_check',
+      sql`${t.status} IN ('running', 'completed', 'failed', 'failed_permanent')`,
+    ),
+    check(
+      'task_runs_error_length_check',
+      sql`${t.errorMessage} IS NULL OR length(${t.errorMessage}) <= 200`,
+    ),
+    index('task_runs_task_started_idx').on(t.taskId, t.startedAt),
+  ],
+);
+
+export const globalNewsItems = pgTable(
+  'global_news_items',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    sourceId: uuid('source_id')
+      .notNull()
+      .references(() => sources.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    url: text('url').notNull(),
+    canonicalUrl: text('canonical_url').notNull(),
+    contentHash: text('content_hash').notNull(),
+    extractedText: text('extracted_text'),
+    summary: text('summary'),
+    publishedAt: timestamp('published_at', { withTimezone: true, mode: 'date' }),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    language: text('language'),
+    embedding: vector('embedding', { dimensions: 256 }),
+    embeddingStatus: text('embedding_status').notNull().default('pending'),
+    embeddingUpdatedAt: timestamp('embedding_updated_at', { withTimezone: true, mode: 'date' }),
+    lastUpdatedInSourceAt: timestamp('last_updated_in_source_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    wasUpdated: boolean('was_updated').notNull().default(false),
+    status: text('status').notNull().default('new'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check(
+      'global_news_items_embedding_status_check',
+      sql`${t.embeddingStatus} IN ('pending', 'ok', 'failed')`,
+    ),
+    check(
+      'global_news_items_status_check',
+      sql`${t.status} IN ('new', 'extracted', 'embedded', 'clustered', 'ignored', 'ai_refused', 'error')`,
+    ),
+    check(
+      'global_news_items_language_check',
+      sql`${t.language} IS NULL OR ${t.language} IN ('ru', 'en', 'other')`,
+    ),
+    unique('global_news_items_source_canonical_unique').on(t.sourceId, t.canonicalUrl),
+    index('global_news_items_language_published_idx').on(t.language, t.publishedAt),
+    index('global_news_items_pending_embedding_idx')
+      .on(t.embeddingStatus, t.fetchedAt)
+      .where(sql`${t.embeddingStatus} = 'pending'`),
+    // pgvector ivfflat index — declared via raw SQL in 0005_phase4.sql.
+    // Drizzle's vector index helper requires drizzle-orm >= 0.39; we keep the
+    // index in the migration only, and consult the migration when adding new
+    // vector indexes. Schema parity remains because the column type and
+    // dimensions match exactly.
+  ],
+);
+
+export const newsClusters = pgTable(
+  'news_clusters',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    canonicalTitle: text('canonical_title').notNull(),
+    mainUrl: text('main_url'),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    sourcesCount: integer('sources_count').notNull().default(1),
+    centroidEmbedding: vector('centroid_embedding', { dimensions: 256 }),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('news_clusters_status_check', sql`${t.status} IN ('active', 'merged', 'archived')`),
+    check('news_clusters_sources_count_check', sql`${t.sourcesCount} >= 1`),
+    index('news_clusters_last_seen_idx')
+      .on(t.lastSeenAt)
+      .where(sql`${t.status} = 'active'`),
+  ],
+);
+
+export const newsClusterItems = pgTable(
+  'news_cluster_items',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    clusterId: uuid('cluster_id')
+      .notNull()
+      .references(() => newsClusters.id, { onDelete: 'cascade' }),
+    newsItemId: uuid('news_item_id')
+      .notNull()
+      .references(() => globalNewsItems.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('news_cluster_items_unique').on(t.clusterId, t.newsItemId),
+    // One news item belongs to at most one cluster (otherwise cluster-level
+    // matching in Phase 5 explodes into N matches per workspace per item).
+    unique('news_cluster_items_news_item_unique').on(t.newsItemId),
+    index('news_cluster_items_cluster_idx').on(t.clusterId),
+  ],
+);
+
+export type SystemStateRow = typeof systemState.$inferSelect;
+export type NewSystemStateRow = typeof systemState.$inferInsert;
+export type TaskRow = typeof tasks.$inferSelect;
+export type NewTaskRow = typeof tasks.$inferInsert;
+export type TaskRunRow = typeof taskRuns.$inferSelect;
+export type NewTaskRunRow = typeof taskRuns.$inferInsert;
+export type GlobalNewsItemRow = typeof globalNewsItems.$inferSelect;
+export type NewGlobalNewsItemRow = typeof globalNewsItems.$inferInsert;
+export type NewsClusterRow = typeof newsClusters.$inferSelect;
+export type NewNewsClusterRow = typeof newsClusters.$inferInsert;
+export type NewsClusterItemRow = typeof newsClusterItems.$inferSelect;
+export type NewNewsClusterItemRow = typeof newsClusterItems.$inferInsert;

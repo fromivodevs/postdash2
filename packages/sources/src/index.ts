@@ -19,3 +19,12 @@ export {
   type ResolveRedirectStatus,
   type ResolvedHostSnapshot,
 } from './redirect-resolver.js';
+export {
+  fetchRssSource,
+  detectLanguage,
+  type ParsedItem,
+  type FetchResult,
+  type FetchOptions,
+  type FetchStatus,
+} from './rss-parser.js';
+export { contentHash, CONTENT_HASH_RULE_VERSION, type ContentHashInput } from './content-hash.js';
