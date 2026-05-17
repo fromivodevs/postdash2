@@ -1,8 +1,4 @@
-import {
-  TelegramInitDataError,
-  verifyInitData,
-  type ParsedInitData,
-} from '@postdash/shared';
+import { TelegramInitDataError, verifyInitData, type ParsedInitData } from '@postdash/shared';
 import type { FastifyRequest } from 'fastify';
 
 /**

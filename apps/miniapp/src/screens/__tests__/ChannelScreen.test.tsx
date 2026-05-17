@@ -21,7 +21,11 @@ import {
   verifyStatusCopy,
   type PendingCodeViewModel,
 } from '../channelView.ts';
-import type { ChannelListProjection, ChannelProjection, ConnectCodeProjection } from '../../api/types.ts';
+import type {
+  ChannelListProjection,
+  ChannelProjection,
+  ConnectCodeProjection,
+} from '../../api/types.ts';
 
 function buildChannel(overrides: Partial<ChannelProjection> = {}): ChannelProjection {
   return {

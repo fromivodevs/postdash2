@@ -50,11 +50,13 @@ const TAB_ICON_PATHS: Record<RoutePath, string> = {
   // Черновики — document with text lines.
   [ROUTES.drafts]: 'M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6',
   // Источники — linked nodes (feeds).
-  [ROUTES.sources]: 'M5 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM5 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM19 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 5h7a3 3 0 0 1 3 3v2M7 19h7a3 3 0 0 0 3-3v-2',
+  [ROUTES.sources]:
+    'M5 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM5 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM19 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 5h7a3 3 0 0 1 3 3v2M7 19h7a3 3 0 0 0 3-3v-2',
   // Канал — paper-plane / broadcast.
   [ROUTES.channel]: 'M21 4 3 11l7 3 3 7 8-17ZM10 14l4-4',
   // Настройки — gear.
-  [ROUTES.settings]: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.3-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.3 1 2-3.4Z',
+  [ROUTES.settings]:
+    'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM19.4 13a7.6 7.6 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.3-1-2 3.4L4.6 11a7.6 7.6 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.3 1 2-3.4Z',
   // /onboarding is not a tab root, but RoutePath includes it — give it the
   // settings glyph so the Record stays exhaustive (Tabbar never renders it).
   [ROUTES.onboarding]: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',

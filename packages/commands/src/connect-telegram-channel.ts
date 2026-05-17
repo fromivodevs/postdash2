@@ -205,9 +205,7 @@ async function doConnect(
     await tx
       .update(channelConnectCodes)
       .set({ status: 'expired' })
-      .where(
-        and(eq(channelConnectCodes.id, code.id), eq(channelConnectCodes.status, 'active')),
-      );
+      .where(and(eq(channelConnectCodes.id, code.id), eq(channelConnectCodes.status, 'active')));
     throw new CommandError('not_found', 'code expired', { code: 'expired_code' });
   }
 
@@ -229,18 +227,14 @@ async function doConnect(
       .limit(1);
     const identity = identityRows[0];
     if (!identity) {
-      throw new CommandError(
-        'forbidden',
-        'bot user has not authenticated via Mini App yet',
-        { code: 'bot_user_unknown' },
-      );
+      throw new CommandError('forbidden', 'bot user has not authenticated via Mini App yet', {
+        code: 'bot_user_unknown',
+      });
     }
     if (identity.status !== 'active') {
-      throw new CommandError(
-        'forbidden',
-        `bot user telegram identity is ${identity.status}`,
-        { code: 'bot_user_inactive' },
-      );
+      throw new CommandError('forbidden', `bot user telegram identity is ${identity.status}`, {
+        code: 'bot_user_inactive',
+      });
     }
     connectingUserId = identity.userId;
   }
@@ -319,12 +313,13 @@ async function doConnect(
       .returning();
     connectionRow = inserted[0];
   } catch (err) {
-    if (isUniqueViolation(err) && violatedConstraintIs(err, 'channel_connections_content_channel_unique')) {
-      throw new CommandError(
-        'conflict',
-        'channel is already connected to another workspace',
-        { code: 'channel_taken' },
-      );
+    if (
+      isUniqueViolation(err) &&
+      violatedConstraintIs(err, 'channel_connections_content_channel_unique')
+    ) {
+      throw new CommandError('conflict', 'channel is already connected to another workspace', {
+        code: 'channel_taken',
+      });
     }
     throw err;
   }
@@ -418,10 +413,7 @@ async function loadConnectionById(
     .limit(1);
   const row = rows[0];
   if (!row) {
-    throw new CommandError(
-      'not_found',
-      `channel_connection ${connectionId} not found on replay`,
-    );
+    throw new CommandError('not_found', `channel_connection ${connectionId} not found on replay`);
   }
   return {
     contentChannel: rowToContentChannel(row.content_channels),
@@ -474,7 +466,8 @@ function rowToChannelConnection(row: {
     contentChannelId: row.contentChannelId,
     status: narrowConnectionStatus(row.status),
     canPostMessages: row.canPostMessages,
-    lastVerifyStatus: row.lastVerifyStatus === null ? null : narrowVerifyStatus(row.lastVerifyStatus),
+    lastVerifyStatus:
+      row.lastVerifyStatus === null ? null : narrowVerifyStatus(row.lastVerifyStatus),
     lastVerifyError: row.lastVerifyError,
     lastVerifiedAt: row.lastVerifiedAt,
     connectedAt: row.connectedAt,

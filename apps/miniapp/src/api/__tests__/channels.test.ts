@@ -198,10 +198,7 @@ describe('postConnect', () => {
 
   it('maps 409 channel_taken to ChannelApiError(httpStatus:409, code:channel_taken)', async () => {
     const fake = buildFetch([
-      jsonResponse(
-        { error: 'CommandError', code: 'channel_taken', message: 'channel taken' },
-        409,
-      ),
+      jsonResponse({ error: 'CommandError', code: 'channel_taken', message: 'channel taken' }, 409),
     ]);
     installFetch(fake);
 

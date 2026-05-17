@@ -26,10 +26,6 @@ export function Skeleton({
   radius = 'var(--radius-sm)',
 }: SkeletonProps) {
   return (
-    <span
-      className="skeleton"
-      aria-hidden="true"
-      style={{ width, height, borderRadius: radius }}
-    />
+    <span className="skeleton" aria-hidden="true" style={{ width, height, borderRadius: radius }} />
   );
 }

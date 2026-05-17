@@ -28,12 +28,7 @@ import {
 } from '@postdash/db';
 import { CommandError } from './errors.js';
 import { runIdempotent } from './idempotency.js';
-import {
-  assembleAuthResult,
-  rowToIdentity,
-  rowToUser,
-  rowToWorkspace,
-} from './row-mappers.js';
+import { assembleAuthResult, rowToIdentity, rowToUser, rowToWorkspace } from './row-mappers.js';
 
 export interface TelegramUserInput {
   telegramUserId: number;
@@ -143,61 +138,65 @@ async function doAuthenticate(
       })
       .where(eq(telegramIdentities.id, existingIdentity.id));
 
-      const refreshedRows = await tx
-        .select()
-        .from(telegramIdentities)
-        .where(eq(telegramIdentities.id, existingIdentity.id))
-        .limit(1);
-      const refreshedIdentity = refreshedRows[0];
-      if (!refreshedIdentity) {
-        throw new CommandError('internal', 'telegram_identity disappeared after update');
-      }
+    const refreshedRows = await tx
+      .select()
+      .from(telegramIdentities)
+      .where(eq(telegramIdentities.id, existingIdentity.id))
+      .limit(1);
+    const refreshedIdentity = refreshedRows[0];
+    if (!refreshedIdentity) {
+      throw new CommandError('internal', 'telegram_identity disappeared after update');
+    }
 
-      const userRows = await tx.select().from(users).where(eq(users.id, existingIdentity.userId)).limit(1);
-      const user = userRows[0];
-      if (!user) {
-        throw new CommandError('internal', 'orphaned telegram_identity points to missing user');
-      }
+    const userRows = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, existingIdentity.userId))
+      .limit(1);
+    const user = userRows[0];
+    if (!user) {
+      throw new CommandError('internal', 'orphaned telegram_identity points to missing user');
+    }
 
-      const { workspace, role, autocreated } = await ensureDefaultWorkspace(
-        tx,
-        user.id,
-        input.telegramUser,
-      );
+    const { workspace, role, autocreated } = await ensureDefaultWorkspace(
+      tx,
+      user.id,
+      input.telegramUser,
+    );
 
-      if (user.lastActiveWorkspaceId !== workspace.id) {
-        await tx
-          .update(users)
-          .set({ lastActiveWorkspaceId: workspace.id })
-          .where(eq(users.id, user.id));
-      }
+    if (user.lastActiveWorkspaceId !== workspace.id) {
+      await tx
+        .update(users)
+        .set({ lastActiveWorkspaceId: workspace.id })
+        .where(eq(users.id, user.id));
+    }
 
-      // `workspace_autocreated` records the rare case where an existing user
-      // had no active workspace and ensureDefaultWorkspace had to create one —
-      // otherwise that workspace+membership creation would leave no audit
-      // trail of its own. Omitted (rather than `false`) on the common path.
-      await tx.insert(operationLog).values({
-        workspaceId: workspace.id,
-        userId: user.id,
-        telegramUserId,
-        commandType: COMMAND_TYPE,
-        objectType: 'user',
-        objectId: user.id,
-        payloadSummary: {
-          isNew: false,
-          identity_status: refreshedIdentity.status,
-          ...(autocreated ? { workspace_autocreated: true } : {}),
-        },
-        result: 'success',
-      });
-
-      return assembleAuthResult({
-        userRow: { ...user, lastActiveWorkspaceId: workspace.id },
-        identityRow: refreshedIdentity,
-        workspaceRow: workspace,
-        role,
+    // `workspace_autocreated` records the rare case where an existing user
+    // had no active workspace and ensureDefaultWorkspace had to create one —
+    // otherwise that workspace+membership creation would leave no audit
+    // trail of its own. Omitted (rather than `false`) on the common path.
+    await tx.insert(operationLog).values({
+      workspaceId: workspace.id,
+      userId: user.id,
+      telegramUserId,
+      commandType: COMMAND_TYPE,
+      objectType: 'user',
+      objectId: user.id,
+      payloadSummary: {
         isNew: false,
-      });
+        identity_status: refreshedIdentity.status,
+        ...(autocreated ? { workspace_autocreated: true } : {}),
+      },
+      result: 'success',
+    });
+
+    return assembleAuthResult({
+      userRow: { ...user, lastActiveWorkspaceId: workspace.id },
+      identityRow: refreshedIdentity,
+      workspaceRow: workspace,
+      role,
+      isNew: false,
+    });
   }
 
   // New user path.
@@ -233,7 +232,8 @@ async function doAuthenticate(
     }
     throw err;
   }
-  if (!newIdentity) throw new CommandError('internal', 'telegram_identities insert returned no row');
+  if (!newIdentity)
+    throw new CommandError('internal', 'telegram_identities insert returned no row');
 
   const workspaceName = pickWorkspaceName(input.telegramUser);
   const newWorkspaceRows = await tx

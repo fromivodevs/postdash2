@@ -32,7 +32,9 @@ import {
 export const users = pgTable(
   'users',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
     status: text('status').notNull().default('active'),
@@ -45,7 +47,9 @@ export const users = pgTable(
 export const workspaces = pgTable(
   'workspaces',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     name: text('name').notNull(),
     // ON DELETE RESTRICT: a user who created a workspace cannot be hard-deleted
     // out from under it. Account removal is a soft-delete (users.status =
@@ -63,7 +67,9 @@ export const workspaces = pgTable(
 export const telegramIdentities = pgTable(
   'telegram_identities',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
@@ -89,7 +95,9 @@ export const telegramIdentities = pgTable(
 export const workspaceMembers = pgTable(
   'workspace_members',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
@@ -103,10 +111,7 @@ export const workspaceMembers = pgTable(
   (t) => [
     unique('workspace_members_workspace_user_unique').on(t.workspaceId, t.userId),
     index('workspace_members_user_id_idx').on(t.userId),
-    check(
-      'workspace_members_role_check',
-      sql`${t.role} IN ('owner', 'admin', 'editor', 'viewer')`,
-    ),
+    check('workspace_members_role_check', sql`${t.role} IN ('owner', 'admin', 'editor', 'viewer')`),
     check('workspace_members_status_check', sql`${t.status} IN ('active', 'removed')`),
   ],
 );
@@ -114,7 +119,9 @@ export const workspaceMembers = pgTable(
 export const commandIdempotency = pgTable(
   'command_idempotency',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     workspaceId: uuid('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     commandType: text('command_type').notNull(),
@@ -131,17 +138,16 @@ export const commandIdempotency = pgTable(
     // Only 'pending' and 'success' are ever persisted: a failed work() DELETEs
     // its slot rather than marking it 'failed' (see runIdempotent). Mirrors
     // command_idempotency_status_check in 0001_phase1.sql.
-    check(
-      'command_idempotency_status_check',
-      sql`${t.status} IN ('pending', 'success')`,
-    ),
+    check('command_idempotency_status_check', sql`${t.status} IN ('pending', 'success')`),
   ],
 );
 
 export const operationLog = pgTable(
   'operation_log',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     workspaceId: uuid('workspace_id'),
     userId: uuid('user_id'),
     telegramUserId: bigint('telegram_user_id', { mode: 'bigint' }),
@@ -191,7 +197,9 @@ export const operationLog = pgTable(
 export const contentChannels = pgTable(
   'content_channels',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     platform: text('platform').notNull(),
     // external_id is text (not bigint): platform-uniform key for future
     // adapters whose IDs are alphanumeric. Telegram int64 fits trivially.
@@ -217,7 +225,9 @@ export const contentChannels = pgTable(
 export const channelConnections = pgTable(
   'channel_connections',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
@@ -268,7 +278,9 @@ export const channelConnections = pgTable(
 export const channelConnectCodes = pgTable(
   'channel_connect_codes',
   {
-    id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),

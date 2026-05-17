@@ -191,10 +191,7 @@ async function runIdempotentInternal<T>(
         await db
           .delete(commandIdempotency)
           .where(
-            and(
-              eq(commandIdempotency.id, existing.id),
-              eq(commandIdempotency.status, 'pending'),
-            ),
+            and(eq(commandIdempotency.id, existing.id), eq(commandIdempotency.status, 'pending')),
           );
         return runIdempotentInternal(db, ctx, work, reclaimDepth + 1);
       }
@@ -205,10 +202,7 @@ async function runIdempotentInternal<T>(
     }
     // status === 'success' — the only other persisted state.
     if (!existing.resultObjectType || !existing.resultObjectId) {
-      throw new CommandError(
-        'internal',
-        `idempotency row marked success but pointer is missing`,
-      );
+      throw new CommandError('internal', `idempotency row marked success but pointer is missing`);
     }
     const result = await work.loadFromPointer({
       objectType: existing.resultObjectType,
@@ -267,9 +261,7 @@ async function runIdempotentInternal<T>(
       const updated = await tx
         .update(commandIdempotency)
         .set(slotPatch)
-        .where(
-          and(eq(commandIdempotency.id, ownedId), eq(commandIdempotency.status, 'pending')),
-        )
+        .where(and(eq(commandIdempotency.id, ownedId), eq(commandIdempotency.status, 'pending')))
         .returning({ id: commandIdempotency.id });
       if (updated.length === 0) {
         throw new CommandError(

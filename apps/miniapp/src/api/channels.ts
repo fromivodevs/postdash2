@@ -26,11 +26,7 @@
  */
 
 import { ApiError, apiFetch } from './client.ts';
-import type {
-  ChannelListProjection,
-  ChannelProjection,
-  ConnectCodeProjection,
-} from './types.ts';
+import type { ChannelListProjection, ChannelProjection, ConnectCodeProjection } from './types.ts';
 
 /**
  * Wire-level error codes that the channel routes may attach to an error body.

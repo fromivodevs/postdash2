@@ -49,10 +49,7 @@ export async function readCurrentUser(
   });
 }
 
-async function readWithin(
-  tx: DbOrTx,
-  telegramUserId: bigint,
-): Promise<ReadCurrentUserResult> {
+async function readWithin(tx: DbOrTx, telegramUserId: bigint): Promise<ReadCurrentUserResult> {
   const identityRows = await tx
     .select()
     .from(telegramIdentities)

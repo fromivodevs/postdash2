@@ -54,11 +54,7 @@ import {
   sanitizeCommandError,
   sanitizeInitDataError,
 } from './error-mapping.js';
-import {
-  projectChannel,
-  projectConnectCode,
-  type DeepLinkBuilder,
-} from './channels-projection.js';
+import { projectChannel, projectConnectCode, type DeepLinkBuilder } from './channels-projection.js';
 
 export interface ChannelsRouteDeps {
   botToken: string;
@@ -91,10 +87,7 @@ const ConnectBodySchema = z.object({
   external_chat_id: z.string().min(1).max(MAX_EXTERNAL_CHAT_ID_LEN),
 });
 
-export async function channelsRoute(
-  app: FastifyInstance,
-  deps: ChannelsRouteDeps,
-): Promise<void> {
+export async function channelsRoute(app: FastifyInstance, deps: ChannelsRouteDeps): Promise<void> {
   // ---------------------------------------------------------------------------
   // POST /channels/connect-codes
   // ---------------------------------------------------------------------------
@@ -114,8 +107,7 @@ export async function channelsRoute(
       if (!guard.ok) return undefined as never;
       const { currentUser } = guard;
 
-      const buildDeepLink: DeepLinkBuilder = (code) =>
-        buildConnectDeepLink(deps.botUsername, code);
+      const buildDeepLink: DeepLinkBuilder = (code) => buildConnectDeepLink(deps.botUsername, code);
 
       try {
         // Idempotency key derived from a stable per-user, per-minute shape:
@@ -229,32 +221,18 @@ export async function channelsRoute(
         // policy gate); this is a UX layer, not a security boundary.
         const validation = await validateConnectCode(app.pool.db, body.code);
         if (validation.status === 'unknown') {
-          throw new CommandError(
-            'not_found',
-            'unknown code',
-            { code: 'invalid_code' },
-          );
+          throw new CommandError('not_found', 'unknown code', { code: 'invalid_code' });
         }
         if (validation.status === 'expired') {
-          throw new CommandError(
-            'not_found',
-            'code expired',
-            { code: 'expired_code' },
-          );
+          throw new CommandError('not_found', 'code expired', { code: 'expired_code' });
         }
         if (validation.status === 'consumed') {
-          throw new CommandError(
-            'conflict',
-            'code already used',
-            { code: 'reused_code' },
-          );
+          throw new CommandError('conflict', 'code already used', { code: 'reused_code' });
         }
         if (validation.workspaceId !== currentUser.defaultWorkspace.id) {
-          throw new CommandError(
-            'forbidden',
-            'code belongs to a different workspace',
-            { code: 'cross_workspace_code' },
-          );
+          throw new CommandError('forbidden', 'code belongs to a different workspace', {
+            code: 'cross_workspace_code',
+          });
         }
 
         // Effective idempotency key includes a sha256 of the canonical body
@@ -275,16 +253,12 @@ export async function channelsRoute(
           .digest('hex');
         const effectiveIdempotencyKey = `${idempotencyKey}:${bodyHash}`;
 
-        const { result } = await connectTelegramChannel(
-          app.pool.db,
-          channelAdapter,
-          {
-            idempotencyKey: effectiveIdempotencyKey,
-            code: body.code,
-            externalChatId: body.external_chat_id,
-            invokedBy: { source: 'miniapp', userId: currentUser.user.id },
-          },
-        );
+        const { result } = await connectTelegramChannel(app.pool.db, channelAdapter, {
+          idempotencyKey: effectiveIdempotencyKey,
+          code: body.code,
+          externalChatId: body.external_chat_id,
+          invokedBy: { source: 'miniapp', userId: currentUser.user.id },
+        });
 
         const projection = projectChannel({
           connection: result.channelConnection,
@@ -344,10 +318,7 @@ export async function channelsRoute(
             content_channel: contentChannels,
           })
           .from(channelConnections)
-          .innerJoin(
-            contentChannels,
-            eq(contentChannels.id, channelConnections.contentChannelId),
-          )
+          .innerJoin(contentChannels, eq(contentChannels.id, channelConnections.contentChannelId))
           .where(
             and(
               eq(channelConnections.workspaceId, currentUser.defaultWorkspace.id),
@@ -565,10 +536,7 @@ function handleChannelCommandError(
     if (err.code === 'internal') {
       req.log.error({ err, wireCode }, `${context} internal error`);
     } else {
-      req.log.warn(
-        { err, code: err.code, wireCode },
-        `${context} command error`,
-      );
+      req.log.warn({ err, code: err.code, wireCode }, `${context} command error`);
     }
     void reply.status(status).send({
       error: 'CommandError',
@@ -579,4 +547,3 @@ function handleChannelCommandError(
   }
   throw err;
 }
-

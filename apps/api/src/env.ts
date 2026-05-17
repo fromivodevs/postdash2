@@ -82,13 +82,10 @@ export const apiEnvSchema = z
   })
   // Telegram refuses non-HTTPS web_app button URLs; in production an http://
   // MINIAPP_URL would silently produce a link Telegram rejects. Fail fast.
-  .refine(
-    (env) => env.NODE_ENV !== 'production' || env.MINIAPP_URL.startsWith('https://'),
-    {
-      message: 'MINIAPP_URL must be https:// when NODE_ENV=production',
-      path: ['MINIAPP_URL'],
-    },
-  )
+  .refine((env) => env.NODE_ENV !== 'production' || env.MINIAPP_URL.startsWith('https://'), {
+    message: 'MINIAPP_URL must be https:// when NODE_ENV=production',
+    path: ['MINIAPP_URL'],
+  })
   // Telegram's setWebhook only accepts HTTPS URLs; an http:// TELEGRAM_WEBHOOK_URL
   // in production would make setWebhook fail at startup. Fail fast at boot instead.
   .refine(

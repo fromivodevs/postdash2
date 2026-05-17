@@ -69,6 +69,6 @@ describe('sanitizeVersion', () => {
     // i.e. 128 UTF-16 code units. Spread-based length check confirms the cap.
     const emojiResult = sanitizeVersion('😀'.repeat(70));
     expect(emojiResult).toBeDefined();
-    expect([...emojiResult as string]).toHaveLength(64);
+    expect([...(emojiResult as string)]).toHaveLength(64);
   });
 });

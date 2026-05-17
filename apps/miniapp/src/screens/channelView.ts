@@ -20,7 +20,11 @@
  * — that's the `codeOverride` input.
  */
 
-import type { ChannelListProjection, ChannelProjection, ConnectCodeProjection } from '../api/types.ts';
+import type {
+  ChannelListProjection,
+  ChannelProjection,
+  ConnectCodeProjection,
+} from '../api/types.ts';
 
 /**
  * Screen-local view-model for an in-memory connect code. Two legitimate

@@ -42,10 +42,15 @@ describe('callBotApi — happy path', () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse(200, { ok: true, result: {} }),
     ) as unknown as typeof globalThis.fetch;
-    await callBotApi(TOKEN, 'getChatMember', { chat_id: '-1001', user_id: 7 }, {
-      fetch: fetchMock,
-      baseUrl: 'https://example.test',
-    });
+    await callBotApi(
+      TOKEN,
+      'getChatMember',
+      { chat_id: '-1001', user_id: 7 },
+      {
+        fetch: fetchMock,
+        baseUrl: 'https://example.test',
+      },
+    );
     expect(fetchMock).toHaveBeenCalledOnce();
     const callArgs = (fetchMock as unknown as { mock: { calls: [string, RequestInit][] } }).mock
       .calls[0];
@@ -187,24 +192,39 @@ describe('callBotApi — network / abort', () => {
 describe('callBotApi — programmer errors throw TelegramAdapterError', () => {
   it('throws on empty token', async () => {
     await expect(
-      callBotApi('', 'getChat', {}, { fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })) }),
+      callBotApi(
+        '',
+        'getChat',
+        {},
+        { fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })) },
+      ),
     ).rejects.toBeInstanceOf(TelegramAdapterError);
   });
 
   it('throws on empty method', async () => {
     await expect(
-      callBotApi(TOKEN, '', {}, {
-        fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })),
-      }),
+      callBotApi(
+        TOKEN,
+        '',
+        {},
+        {
+          fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })),
+        },
+      ),
     ).rejects.toBeInstanceOf(TelegramAdapterError);
   });
 
   it('throws on non-positive timeoutMs', async () => {
     await expect(
-      callBotApi(TOKEN, 'getChat', {}, {
-        fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })),
-        timeoutMs: 0,
-      }),
+      callBotApi(
+        TOKEN,
+        'getChat',
+        {},
+        {
+          fetch: fakeFetch(jsonResponse(200, { ok: true, result: {} })),
+          timeoutMs: 0,
+        },
+      ),
     ).rejects.toBeInstanceOf(TelegramAdapterError);
   });
 });

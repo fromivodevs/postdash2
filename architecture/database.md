@@ -57,7 +57,7 @@ The DB-branching argument is the decisive one: our cumulative `phase/N-*` Git br
 
 ## Operational consequences
 
-- **Tests that need DB** (gated by `SKIP_DB_TESTS=1` flag) run against Neon. Per-test schema isolation (`_db-helpers.ts`) prevents cross-test pollution but eats Neon connection slots. On free tier (10 max connections) run test suites sequentially:
+- **Tests that need DB** run against Neon. For live phase validation set `RUN_DB_TESTS=1` plus `TEST_DATABASE_URL` or `DATABASE_URL`; for offline/pure checks set `SKIP_DB_TESTS=1`. Per-test schema isolation (`_db-helpers.ts`) prevents cross-test pollution but eats Neon connection slots. On free tier (10 max connections) run test suites sequentially:
   ```bash
   pnpm --filter @postdash/commands test --pool=forks --poolOptions.forks.singleFork
   pnpm --filter @postdash/api test --pool=forks --poolOptions.forks.singleFork

@@ -42,9 +42,8 @@ function makeFakeDb(script: FakeDbScript): Database {
     for (const m of ['from', 'where', 'limit', 'orderBy', 'innerJoin']) {
       proxy[m] = () => proxy;
     }
-    (proxy as { then: unknown }).then = (
-      resolve: (v: unknown[]) => unknown,
-    ): unknown => resolve(rows);
+    (proxy as { then: unknown }).then = (resolve: (v: unknown[]) => unknown): unknown =>
+      resolve(rows);
     return proxy;
   };
   return {
@@ -72,10 +71,7 @@ describe('handleStartConnect', () => {
     const reply = vi.fn(async (_: string) => {});
     const pool = makeFakePool(db);
 
-    await handleStartConnect(
-      { db: pool.db, reply },
-      { code: 'GOOD1234', telegramUserId: 42 },
-    );
+    await handleStartConnect({ db: pool.db, reply }, { code: 'GOOD1234', telegramUserId: 42 });
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(_replyCopy.ok);
@@ -99,10 +95,7 @@ describe('handleStartConnect', () => {
     const reply = vi.fn(async (_: string) => {});
     const pool = makeFakePool(db);
 
-    await handleStartConnect(
-      { db: pool.db, reply },
-      { code: 'EXPIRED1', telegramUserId: 42 },
-    );
+    await handleStartConnect({ db: pool.db, reply }, { code: 'EXPIRED1', telegramUserId: 42 });
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(_replyCopy.expired);
@@ -117,10 +110,7 @@ describe('handleStartConnect', () => {
     const reply = vi.fn(async (_: string) => {});
     const pool = makeFakePool(db);
 
-    await handleStartConnect(
-      { db: pool.db, reply },
-      { code: 'USED1234', telegramUserId: 42 },
-    );
+    await handleStartConnect({ db: pool.db, reply }, { code: 'USED1234', telegramUserId: 42 });
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(_replyCopy.consumed);
@@ -132,10 +122,7 @@ describe('handleStartConnect', () => {
     const reply = vi.fn(async (_: string) => {});
     const pool = makeFakePool(db);
 
-    await handleStartConnect(
-      { db: pool.db, reply },
-      { code: 'NOPE1234', telegramUserId: 42 },
-    );
+    await handleStartConnect({ db: pool.db, reply }, { code: 'NOPE1234', telegramUserId: 42 });
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(_replyCopy.unknown);
@@ -148,10 +135,7 @@ describe('handleStartConnect', () => {
     const pool = makeFakePool(db);
     const selectSpy = vi.spyOn(pool.db, 'select');
 
-    await handleStartConnect(
-      { db: pool.db, reply },
-      { code: '   ', telegramUserId: 42 },
-    );
+    await handleStartConnect({ db: pool.db, reply }, { code: '   ', telegramUserId: 42 });
 
     expect(reply).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(_replyCopy.empty);

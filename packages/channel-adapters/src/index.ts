@@ -10,14 +10,8 @@
  * и architecture/channel-connection.md.
  */
 
-export {
-  createTelegramChannelAdapter,
-  TelegramAdapterError,
-} from './telegram/index.js';
-export type {
-  TelegramChannelAdapter,
-  CreateTelegramChannelAdapterDeps,
-} from './telegram/index.js';
+export { createTelegramChannelAdapter, TelegramAdapterError } from './telegram/index.js';
+export type { TelegramChannelAdapter, CreateTelegramChannelAdapterDeps } from './telegram/index.js';
 export type {
   VerifyConnectionInput,
   VerifyConnectionResult,

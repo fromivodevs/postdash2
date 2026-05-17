@@ -14,7 +14,13 @@ describe('errorToCopy', () => {
   });
 
   it('groups all initData-integrity codes onto the same "session invalid" copy', () => {
-    const codes = ['missing_hash', 'missing_user', 'missing_auth_date', 'invalid_hash', 'parse_error'];
+    const codes = [
+      'missing_hash',
+      'missing_user',
+      'missing_auth_date',
+      'invalid_hash',
+      'parse_error',
+    ];
     for (const code of codes) {
       const copy = errorToCopy(new ApiError(401, 'x', { error: 'TelegramInitDataError', code }));
       expect(copy.title).toBe('Сессия Telegram недействительна');
@@ -39,20 +45,23 @@ describe('errorToCopy', () => {
   });
 
   it('maps missing_authorization to the open-in-Telegram copy', () => {
-    const copy = errorToCopy(new ApiError(401, 'x', { error: 'Unauthorized', code: 'missing_authorization' }));
+    const copy = errorToCopy(
+      new ApiError(401, 'x', { error: 'Unauthorized', code: 'missing_authorization' }),
+    );
     expect(copy.title).toBe('Открой через Telegram');
     expect(copy.retryable).toBe(false);
   });
 
   it('maps CommandError codes (forbidden, conflict, validation_failed) to tailored copy', () => {
-    expect(errorToCopy(new ApiError(403, 'x', { error: 'CommandError', code: 'forbidden' })).title).toBe(
-      'Доступ ограничен',
-    );
-    expect(errorToCopy(new ApiError(409, 'x', { error: 'CommandError', code: 'conflict' })).retryable).toBe(
-      true,
-    );
     expect(
-      errorToCopy(new ApiError(400, 'x', { error: 'CommandError', code: 'validation_failed' })).retryable,
+      errorToCopy(new ApiError(403, 'x', { error: 'CommandError', code: 'forbidden' })).title,
+    ).toBe('Доступ ограничен');
+    expect(
+      errorToCopy(new ApiError(409, 'x', { error: 'CommandError', code: 'conflict' })).retryable,
+    ).toBe(true);
+    expect(
+      errorToCopy(new ApiError(400, 'x', { error: 'CommandError', code: 'validation_failed' }))
+        .retryable,
     ).toBe(false);
   });
 

@@ -45,9 +45,7 @@ interface CopyButtonProps {
  */
 export async function copyToClipboard(value: string): Promise<boolean> {
   const clipboard: Clipboard | undefined =
-    typeof navigator !== 'undefined' && 'clipboard' in navigator
-      ? navigator.clipboard
-      : undefined;
+    typeof navigator !== 'undefined' && 'clipboard' in navigator ? navigator.clipboard : undefined;
   if (clipboard?.writeText) {
     try {
       await clipboard.writeText(value);
@@ -93,13 +91,7 @@ export function CopyButton({
   };
 
   return (
-    <Button
-      size="m"
-      mode="bezeled"
-      onClick={handleClick}
-      disabled={disabled}
-      aria-label={label}
-    >
+    <Button size="m" mode="bezeled" onClick={handleClick} disabled={disabled} aria-label={label}>
       {label}
     </Button>
   );

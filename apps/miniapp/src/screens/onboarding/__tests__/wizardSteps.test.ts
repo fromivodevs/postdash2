@@ -24,7 +24,7 @@ describe('wizard step model', () => {
     expect(WIZARD_EXIT_ROUTE).toBe(ROUTES.radar);
   });
 
-  it('each step routes its primary action to that step\'s destination screen (§9)', () => {
+  it("each step routes its primary action to that step's destination screen (§9)", () => {
     // §9: the primary action navigates to the screen, it is not an internal
     // "next" button — so every step must carry a concrete destination route.
     expect(WIZARD_STEPS.map((s) => s.actionRoute)).toEqual([

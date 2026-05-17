@@ -7,10 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import {
-  TELEGRAM_POST_MAX_LENGTH,
-  fitsTelegramPostLimit,
-} from '../telegram-format.js';
+import { TELEGRAM_POST_MAX_LENGTH, fitsTelegramPostLimit } from '../telegram-format.js';
 
 describe('fitsTelegramPostLimit', () => {
   it('returns true for empty string', () => {

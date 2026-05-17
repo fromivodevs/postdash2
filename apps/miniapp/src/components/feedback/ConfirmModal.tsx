@@ -79,13 +79,7 @@ export function ConfirmModal({
         {description && <p className="confirm-modal__description">{description}</p>}
         {children}
         <div className="confirm-modal__actions">
-          <Button
-            size="m"
-            mode="gray"
-            stretched
-            className="confirm-modal__btn"
-            onClick={onCancel}
-          >
+          <Button size="m" mode="gray" stretched className="confirm-modal__btn" onClick={onCancel}>
             {cancelLabel}
           </Button>
           <Button

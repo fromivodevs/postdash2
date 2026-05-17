@@ -61,12 +61,7 @@ export async function assertWorkspaceRole(
   const rows = await tx
     .select({ role: workspaceMembers.role, status: workspaceMembers.status })
     .from(workspaceMembers)
-    .where(
-      and(
-        eq(workspaceMembers.workspaceId, workspaceId),
-        eq(workspaceMembers.userId, userId),
-      ),
-    )
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
     .limit(1);
   const row = rows[0];
   if (!row) {
@@ -83,10 +78,7 @@ export async function assertWorkspaceRole(
   }
   const role = narrowRole(row.role);
   if (ROLE_RANK[role] < ROLE_RANK[minRole]) {
-    throw new CommandError(
-      'forbidden',
-      `role '${role}' is below required minimum '${minRole}'`,
-    );
+    throw new CommandError('forbidden', `role '${role}' is below required minimum '${minRole}'`);
   }
   return { role };
 }

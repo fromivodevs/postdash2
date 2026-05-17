@@ -22,10 +22,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signInitDataForTest } from '@postdash/shared';
-import type {
-  TelegramChannelAdapter,
-  VerifyConnectionResult,
-} from '@postdash/commands';
+import type { TelegramChannelAdapter, VerifyConnectionResult } from '@postdash/commands';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.js';
 import { makeFakePool } from './helpers/fake-pool.js';
@@ -127,20 +124,11 @@ describe('POST /channels/connect-codes', () => {
     const fake = makeFakePool({
       // readCurrentUser: identity, user, workspace+member JOIN
       // assertWorkspaceRole: membership { role, status }
-      selectResults: [
-        [IDENTITY_ROW],
-        [USER_ROW],
-        [MEMBER_JOIN_ROW],
-        [ADMIN_MEMBERSHIP_ROW],
-      ],
+      selectResults: [[IDENTITY_ROW], [USER_ROW], [MEMBER_JOIN_ROW], [ADMIN_MEMBERSHIP_ROW]],
       // runIdempotent INSERT slot (with returning id) +
       // INSERT channel_connect_codes RETURNING id +
       // INSERT operation_log (no returning)
-      insertResults: [
-        [{ id: 'idem-1' }],
-        [{ id: CONNECT_CODE_ID }],
-        [],
-      ],
+      insertResults: [[{ id: 'idem-1' }], [{ id: CONNECT_CODE_ID }], []],
       // runIdempotent UPDATE slot -> success
       updateResults: [[{ id: 'idem-1' }]],
     });
@@ -384,8 +372,7 @@ describe('POST /channels/connect', () => {
     // Monkey-patch the next insert (channel_connections) to throw a
     // unique-violation. The connect command catches 23505 with constraint
     // name `channel_connections_content_channel_unique` and maps it.
-    const originalInsert = (fake.pool.db as unknown as { insert: () => unknown })
-      .insert;
+    const originalInsert = (fake.pool.db as unknown as { insert: () => unknown }).insert;
     let insertCallCount = 0;
     (fake.pool.db as unknown as { insert: () => unknown }).insert = () => {
       insertCallCount += 1;
@@ -396,7 +383,16 @@ describe('POST /channels/connect', () => {
           constraint: 'channel_connections_content_channel_unique',
         });
         const proxy: Record<string, unknown> = {};
-        const pass = ['from', 'where', 'set', 'values', 'onConflictDoUpdate', 'innerJoin', 'orderBy', 'limit'];
+        const pass = [
+          'from',
+          'where',
+          'set',
+          'values',
+          'onConflictDoUpdate',
+          'innerJoin',
+          'orderBy',
+          'limit',
+        ];
         for (const m of pass) proxy[m] = () => proxy;
         proxy['returning'] = async () => {
           throw err;

@@ -67,7 +67,8 @@ pnpm dev:worker
 ## Common commands
 
 ```bash
-pnpm test          # vitest across all packages
+pnpm test          # vitest across all packages; DB suites require Neon DATABASE_URL
+SKIP_DB_TESTS=1 pnpm test  # offline/pure test pass without a DB
 pnpm typecheck     # tsc --noEmit во всех workspace'ах
 pnpm lint          # eslint .
 pnpm format        # prettier --write .

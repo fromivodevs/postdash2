@@ -80,7 +80,13 @@ export function OnboardingScreen() {
         <Button size="l" stretched onClick={handlePrimary}>
           {step.actionLabel}
         </Button>
-        <Button size="l" mode="plain" stretched onClick={handleSkip} aria-label="Пропустить настройку">
+        <Button
+          size="l"
+          mode="plain"
+          stretched
+          onClick={handleSkip}
+          aria-label="Пропустить настройку"
+        >
           Пропустить
         </Button>
       </Placeholder>

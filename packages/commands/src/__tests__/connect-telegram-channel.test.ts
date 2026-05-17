@@ -54,7 +54,9 @@ async function seedCode(
   return { codeId: row.id, codeHash };
 }
 
-const OK_VERIFICATION = (overrides: Partial<Extract<VerifyConnectionResult, { ok: true }>> = {}): VerifyConnectionResult => ({
+const OK_VERIFICATION = (
+  overrides: Partial<Extract<VerifyConnectionResult, { ok: true }>> = {},
+): VerifyConnectionResult => ({
   ok: true,
   externalId: '-1001234567890',
   title: 'Test Channel',
@@ -278,7 +280,10 @@ describe.skipIf(SKIP_DB)('connectTelegramChannel (DB)', () => {
     expect(first.replayed).toBe(false);
 
     // Code must be consumed now.
-    const codeRows = await handle.db.execute<{ status: string; consumed_by_external_chat_id: string | null }>(
+    const codeRows = await handle.db.execute<{
+      status: string;
+      consumed_by_external_chat_id: string | null;
+    }>(
       sql`SELECT status, consumed_by_external_chat_id FROM channel_connect_codes WHERE id = ${codeId}`,
     );
     expect(codeRows[0]?.status).toBe('consumed');

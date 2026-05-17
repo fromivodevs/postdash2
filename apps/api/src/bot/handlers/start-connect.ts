@@ -120,17 +120,11 @@ export async function handleStartConnect(
   const TIMEOUT_SENTINEL: TimeoutMarker = { __timeout: true };
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<TimeoutMarker>((resolve) => {
-    timeoutHandle = setTimeout(
-      () => resolve(TIMEOUT_SENTINEL),
-      VALIDATE_CONNECT_CODE_TIMEOUT_MS,
-    );
+    timeoutHandle = setTimeout(() => resolve(TIMEOUT_SENTINEL), VALIDATE_CONNECT_CODE_TIMEOUT_MS);
   });
   let raceResult: Awaited<ReturnType<typeof validateConnectCode>> | TimeoutMarker;
   try {
-    raceResult = await Promise.race([
-      validateConnectCode(deps.db, code),
-      timeoutPromise,
-    ]);
+    raceResult = await Promise.race([validateConnectCode(deps.db, code), timeoutPromise]);
   } finally {
     // Clear the timer regardless of which promise resolved first so the
     // event loop isn't held open by a pending 2s timer when the DB

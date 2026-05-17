@@ -94,9 +94,7 @@ if (bot) {
 
 const app = await buildApp(
   env,
-  bot
-    ? { pool, ai, bot, ...(channelAdapter ? { channelAdapter } : {}) }
-    : { pool, ai },
+  bot ? { pool, ai, bot, ...(channelAdapter ? { channelAdapter } : {}) } : { pool, ai },
 );
 
 // Re-point the bot's logger ref to the Fastify app logger so /start logs and

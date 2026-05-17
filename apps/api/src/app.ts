@@ -110,10 +110,7 @@ export async function buildApp(
     void reply.header('X-Frame-Options', 'DENY');
     void reply.header('X-Content-Type-Options', 'nosniff');
     if (isProd) {
-      void reply.header(
-        'Strict-Transport-Security',
-        'max-age=63072000; includeSubDomains',
-      );
+      void reply.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
     }
   });
 
@@ -199,9 +196,7 @@ export async function buildApp(
     // endpoint at all when the secret is empty rather than silently fail-open.
     // env.ts already enforces this in production; this guard covers dev/test.
     if (!env.TELEGRAM_WEBHOOK_SECRET.trim()) {
-      app.log.warn(
-        'TELEGRAM_WEBHOOK_SECRET is empty; /telegram/webhook route is NOT registered',
-      );
+      app.log.warn('TELEGRAM_WEBHOOK_SECRET is empty; /telegram/webhook route is NOT registered');
     } else {
       await app.register(telegramWebhookRoute, {
         bot: deps.bot,

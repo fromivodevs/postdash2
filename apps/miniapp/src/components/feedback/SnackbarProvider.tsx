@@ -11,7 +11,14 @@
  */
 
 import { Snackbar } from '@telegram-apps/telegram-ui';
-import { createContext, useCallback, useContext, useEffect, useReducer, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useReducer,
+  type ReactNode,
+} from 'react';
 import {
   initialSnackbarState,
   snackbarReducer,

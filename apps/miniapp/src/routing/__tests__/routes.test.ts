@@ -72,7 +72,9 @@ describe('deep-link targets land on a registered route', () => {
     for (const param of params) {
       const target = startParamToPath(param);
       expect(target, `start_param "${param}" must resolve`).not.toBe(null);
-      expect(isRegisteredRoute(target as string), `target "${target}" must be registered`).toBe(true);
+      expect(isRegisteredRoute(target as string), `target "${target}" must be registered`).toBe(
+        true,
+      );
     }
   });
 

@@ -1,9 +1,9 @@
 /**
  * Tests for the SQL migrator: concurrency lock + checksum drift detection.
  *
- * Requires a real Postgres instance (docker-compose service on 127.0.0.1:5432
- * by default; override with TEST_DATABASE_URL or DATABASE_URL). Skipped wholesale
- * when SKIP_DB_TESTS=1 (CI gate for environments without a DB).
+ * Requires an explicit Neon TEST_DATABASE_URL or DATABASE_URL. Skipped wholesale
+ * when SKIP_DB_TESTS=1, or skipped automatically when no URL is present.
+ * RUN_DB_TESTS=1 makes the URL mandatory for phase validation.
  *
  * Isolation strategy: each test run gets a unique schema name (postdash_migrate_test_<rand>),
  * we point `search_path` at it, run migrations against tables created inside it,
@@ -57,15 +57,12 @@ describe('buildDriftPolicy', () => {
   });
 });
 
-const SKIP = process.env['SKIP_DB_TESTS'] === '1';
 const DB_REQUIRED = process.env['RUN_DB_TESTS'] === '1';
-const TEST_DB_URL =
-  process.env['TEST_DATABASE_URL'] ??
-  process.env['DATABASE_URL'] ??
-  'postgresql://postdash:postdash@127.0.0.1:5432/postdash';
+const TEST_DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'] ?? '';
+const SKIP = process.env['SKIP_DB_TESTS'] === '1' || (!DB_REQUIRED && !TEST_DB_URL);
 
 // vitest `describe.skipIf` short-circuits the whole block when SKIP_DB_TESTS=1,
-// so no postgres client is ever created and CI without a DB stays green.
+// so no postgres client is ever created when no explicit Neon DB is available.
 describe.skipIf(SKIP)('runMigrations', () => {
   const schema = `postdash_migrate_test_${Math.random().toString(36).slice(2, 10)}`;
 
@@ -75,6 +72,10 @@ describe.skipIf(SKIP)('runMigrations', () => {
   let sql: postgres.Sql | undefined;
 
   beforeAll(async () => {
+    if (!TEST_DB_URL) {
+      throw new Error('RUN_DB_TESTS=1 requires TEST_DATABASE_URL or DATABASE_URL pointing at Neon');
+    }
+
     try {
       sql = postgres(TEST_DB_URL, { max: 5, connect_timeout: 10, prepare: false });
       await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);

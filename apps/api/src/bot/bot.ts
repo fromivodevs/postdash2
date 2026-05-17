@@ -165,10 +165,12 @@ export function buildBot(deps: BotDeps): Bot {
         } catch (err) {
           // Validation is best-effort: a DB hiccup should NOT prevent the user
           // from seeing the inline button to the Mini App. Log and continue.
-          deps.getLogger().error(
-            { err, telegramUserId: tgUserId },
-            'start-connect handler failed; continuing with default reply',
-          );
+          deps
+            .getLogger()
+            .error(
+              { err, telegramUserId: tgUserId },
+              'start-connect handler failed; continuing with default reply',
+            );
         }
       }
     }

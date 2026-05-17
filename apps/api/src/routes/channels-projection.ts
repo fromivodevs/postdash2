@@ -57,9 +57,7 @@ export function projectChannel(input: ChannelProjectionInput): ChannelProjection
     last_verified_at: input.connection.lastVerifiedAt
       ? input.connection.lastVerifiedAt.toISOString()
       : null,
-    connected_at: input.connection.connectedAt
-      ? input.connection.connectedAt.toISOString()
-      : null,
+    connected_at: input.connection.connectedAt ? input.connection.connectedAt.toISOString() : null,
   };
   // Parse-validate at the boundary: a missing/extra field caught here fails
   // the request loudly server-side rather than silently shipping a malformed

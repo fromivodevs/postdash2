@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import {
-  generateConnectCode,
-  hashConnectCode,
-  _testInternals,
-} from '../connect-code-helpers.js';
+import { generateConnectCode, hashConnectCode, _testInternals } from '../connect-code-helpers.js';
 
 describe('generateConnectCode', () => {
   it('produces an 8-character string from the Crockford alphabet', () => {

@@ -63,9 +63,12 @@ async function buildWithBot(): Promise<FastifyInstance> {
     has_topics_enabled: false,
     allows_users_to_create_topics: false,
   };
-  return buildApp(withTestEnv({ TELEGRAM_BOT_TOKEN: BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET: WEBHOOK_SECRET }), {
-    bot,
-  });
+  return buildApp(
+    withTestEnv({ TELEGRAM_BOT_TOKEN: BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET: WEBHOOK_SECRET }),
+    {
+      bot,
+    },
+  );
 }
 
 describe('POST /telegram/webhook', () => {

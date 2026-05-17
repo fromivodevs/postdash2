@@ -63,7 +63,16 @@ export function makeMockDb(script: MockDbScript = {}): MockDb {
   // (or rejects with the scripted error).
   const makeChain = (resolveRows: () => unknown[]): unknown => {
     const proxy: Record<string, unknown> = {};
-    const passthrough = ['from', 'where', 'set', 'values', 'onConflictDoNothing', 'innerJoin', 'orderBy', 'limit'];
+    const passthrough = [
+      'from',
+      'where',
+      'set',
+      'values',
+      'onConflictDoNothing',
+      'innerJoin',
+      'orderBy',
+      'limit',
+    ];
     for (const m of passthrough) proxy[m] = () => proxy;
     proxy['returning'] = async () => resolveRows();
     (proxy as { then: unknown }).then = (

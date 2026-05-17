@@ -28,14 +28,13 @@ export function RadarScreen() {
   return (
     <Section header="Радар">
       {session && (
-        <Cell subtitle={`${pickUserDisplayName(session.auth.identity)} · Роль: ${session.auth.role}`}>
+        <Cell
+          subtitle={`${pickUserDisplayName(session.auth.identity)} · Роль: ${session.auth.role}`}
+        >
           {session.auth.workspace.name}
         </Cell>
       )}
-      <Placeholder
-        header="Радар пока пуст"
-        description="Подожди 5-10 мин, мы проверяем источники."
-      >
+      <Placeholder header="Радар пока пуст" description="Подожди 5-10 мин, мы проверяем источники.">
         <Button size="l" stretched onClick={handleCheckNow} aria-label="Проверить сейчас">
           Проверить сейчас
         </Button>

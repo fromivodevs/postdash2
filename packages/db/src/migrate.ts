@@ -211,8 +211,7 @@ export async function runMigrations(
     `ALTER TABLE _migrations ADD COLUMN IF NOT EXISTS checksum text NOT NULL DEFAULT ''`,
   );
 
-  const files =
-    opts.files ?? loadMigrationFiles(opts.migrationsDir ?? defaultMigrationsDir);
+  const files = opts.files ?? loadMigrationFiles(opts.migrationsDir ?? defaultMigrationsDir);
 
   if (files.length === 0) {
     console.warn('No migration files found');
@@ -235,9 +234,7 @@ export async function runMigrations(
   if (driftPolicy.isGlobal && optOverride !== true) {
     // Loud warning only when the global override came from env / string, not
     // from the tests' programmatic `true`.
-    console.warn(
-      '[migrate] GLOBAL CHECKSUM DRIFT OVERRIDE ACTIVE — NOT FOR PRODUCTION',
-    );
+    console.warn('[migrate] GLOBAL CHECKSUM DRIFT OVERRIDE ACTIVE — NOT FOR PRODUCTION');
   }
 
   for (const file of files) {
@@ -284,13 +281,14 @@ export async function runMigrations(
       // (~2h on Linux default). SET LOCAL is scoped to this txn only.
       await tx.unsafe(`SET LOCAL lock_timeout = '30s'`);
       try {
-        await tx.unsafe('SELECT pg_advisory_xact_lock($1::int8)', [
-          MIGRATION_LOCK_ID.toString(),
-        ]);
+        await tx.unsafe('SELECT pg_advisory_xact_lock($1::int8)', [MIGRATION_LOCK_ID.toString()]);
       } catch (err) {
         const lockErr = err as { code?: string; message?: string };
         // Postgres SQLSTATE 55P03 = lock_not_available (raised by lock_timeout).
-        if (lockErr.code === '55P03' || /lock.*timeout|lock not available/i.test(lockErr.message ?? '')) {
+        if (
+          lockErr.code === '55P03' ||
+          /lock.*timeout|lock not available/i.test(lockErr.message ?? '')
+        ) {
           throw new Error(
             `Migration lock not available within 30s. Either (a) a previous run crashed and left a stale advisory lock, OR (b) a legitimate long migration is still running on another instance. Check pg_stat_activity + pg_locks before killing.`,
             { cause: err },

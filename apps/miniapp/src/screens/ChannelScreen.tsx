@@ -269,11 +269,8 @@ function PendingView({
   // POST /channels/connect-codes response), fall back to building one from
   // the configured bot username for the deep-link source path (where we only
   // have the plaintext code).
-  const plaintextCode = code === null
-    ? null
-    : code.source === 'fresh-post'
-      ? code.projection.code
-      : code.code;
+  const plaintextCode =
+    code === null ? null : code.source === 'fresh-post' ? code.projection.code : code.code;
 
   const deepLink = useMemo(() => {
     if (!code) return '';
@@ -369,20 +366,16 @@ function ConnectedView({ channel, onRefresh, refreshing }: ConnectedViewProps): 
       <div className="channel-connected">
         <div className="channel-connected__header">
           {channel.photo_url ? (
-            <img
-              className="channel-connected__photo"
-              src={channel.photo_url}
-              alt=""
+            <img className="channel-connected__photo" src={channel.photo_url} alt="" aria-hidden />
+          ) : (
+            <div
+              className="channel-connected__photo channel-connected__photo--placeholder"
               aria-hidden
             />
-          ) : (
-            <div className="channel-connected__photo channel-connected__photo--placeholder" aria-hidden />
           )}
           <div className="channel-connected__title-block">
             <p className="channel-connected__title">{channel.title}</p>
-            {channel.username && (
-              <p className="channel-connected__username">@{channel.username}</p>
-            )}
+            {channel.username && <p className="channel-connected__username">@{channel.username}</p>}
             <span className="channel-connected__badge" aria-label="Статус: подключён">
               Подключён
             </span>

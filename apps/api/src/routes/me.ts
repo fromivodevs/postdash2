@@ -18,77 +18,81 @@ export async function meRoute(app: FastifyInstance, deps: MeRouteDeps): Promise<
    * idempotency slot. If the user has never authenticated, returns 404 so the
    * client knows to POST /auth/telegram first.
    */
-  app.get('/me', {
-    config: {
-      rateLimit: { max: 60, timeWindow: '1 minute' },
+  app.get(
+    '/me',
+    {
+      config: {
+        rateLimit: { max: 60, timeWindow: '1 minute' },
+      },
     },
-  }, async (req, reply): Promise<AuthProjection> => {
-    if (!deps.botToken) {
-      void reply.status(503).send({
-        error: 'ConfigError',
-        code: 'bot_token_missing',
-        message: 'TELEGRAM_BOT_TOKEN is not configured',
-      });
-      return undefined as never;
-    }
-    if (!app.pool) {
-      void reply.status(503).send({
-        error: 'ConfigError',
-        code: 'db_unavailable',
-        message: 'database pool is not wired',
-      });
-      return undefined as never;
-    }
-
-    let parsed;
-    try {
-      parsed = extractInitData(req, deps.botToken, deps.initDataMaxAgeSec);
-    } catch (err) {
-      if (err instanceof TelegramInitDataError) {
-        // `code` is the stable client contract; the raw `message` can leak
-        // field-name detail. Genericize the message, log the original.
-        req.log.warn({ err, code: err.code }, 'telegram initData verification failed');
-        void reply.status(401).send({
-          error: 'TelegramInitDataError',
-          code: err.code,
-          message: sanitizeInitDataError(err),
+    async (req, reply): Promise<AuthProjection> => {
+      if (!deps.botToken) {
+        void reply.status(503).send({
+          error: 'ConfigError',
+          code: 'bot_token_missing',
+          message: 'TELEGRAM_BOT_TOKEN is not configured',
         });
         return undefined as never;
       }
-      throw err;
-    }
-    if (!parsed) {
-      void reply.status(401).send({
-        error: 'MissingAuthorization',
-        code: 'missing_authorization',
-        message: 'Authorization header is required',
-      });
-      return undefined as never;
-    }
+      if (!app.pool) {
+        void reply.status(503).send({
+          error: 'ConfigError',
+          code: 'db_unavailable',
+          message: 'database pool is not wired',
+        });
+        return undefined as never;
+      }
 
-    try {
-      const result = await readCurrentUser(app.pool.db, {
-        telegramUserId: parsed.user.id,
-      });
-      return projectReadCurrentUser(result);
-    } catch (err) {
-      if (err instanceof CommandError) {
-        // Sanitize at the boundary: the raw message leaks internal field
-        // names and state. Log the original, send a generic message.
-        const { status, message } = sanitizeCommandError(err);
-        if (err.code === 'internal') {
-          req.log.error({ err }, 'readCurrentUser internal error');
-        } else {
-          req.log.warn({ err, code: err.code }, 'readCurrentUser command error');
+      let parsed;
+      try {
+        parsed = extractInitData(req, deps.botToken, deps.initDataMaxAgeSec);
+      } catch (err) {
+        if (err instanceof TelegramInitDataError) {
+          // `code` is the stable client contract; the raw `message` can leak
+          // field-name detail. Genericize the message, log the original.
+          req.log.warn({ err, code: err.code }, 'telegram initData verification failed');
+          void reply.status(401).send({
+            error: 'TelegramInitDataError',
+            code: err.code,
+            message: sanitizeInitDataError(err),
+          });
+          return undefined as never;
         }
-        void reply.status(status).send({
-          error: 'CommandError',
-          code: err.code,
-          message,
+        throw err;
+      }
+      if (!parsed) {
+        void reply.status(401).send({
+          error: 'MissingAuthorization',
+          code: 'missing_authorization',
+          message: 'Authorization header is required',
         });
         return undefined as never;
       }
-      throw err;
-    }
-  });
+
+      try {
+        const result = await readCurrentUser(app.pool.db, {
+          telegramUserId: parsed.user.id,
+        });
+        return projectReadCurrentUser(result);
+      } catch (err) {
+        if (err instanceof CommandError) {
+          // Sanitize at the boundary: the raw message leaks internal field
+          // names and state. Log the original, send a generic message.
+          const { status, message } = sanitizeCommandError(err);
+          if (err.code === 'internal') {
+            req.log.error({ err }, 'readCurrentUser internal error');
+          } else {
+            req.log.warn({ err, code: err.code }, 'readCurrentUser command error');
+          }
+          void reply.status(status).send({
+            error: 'CommandError',
+            code: err.code,
+            message,
+          });
+          return undefined as never;
+        }
+        throw err;
+      }
+    },
+  );
 }

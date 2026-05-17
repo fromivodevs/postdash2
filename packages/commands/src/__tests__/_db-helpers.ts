@@ -6,8 +6,9 @@
  * and DROPs it in `afterAll`. This keeps tests parallel-safe and isolated
  * from any existing rows in the `public` schema.
  *
- * Gated by SKIP_DB_TESTS=1 — callers use `describe.skipIf(SKIP)` to elide the
- * block entirely when a Postgres instance isn't available (CI without docker).
+ * Gated by SKIP_DB_TESTS=1, or skipped automatically when no explicit Neon
+ * TEST_DATABASE_URL/DATABASE_URL is present. RUN_DB_TESTS=1 makes the URL
+ * mandatory for phase validation.
  */
 
 import { readFileSync } from 'node:fs';
@@ -23,11 +24,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const MIGRATIONS_DIR = join(__dirname, '..', '..', '..', 'db', 'migrations');
 
-export const SKIP_DB = process.env['SKIP_DB_TESTS'] === '1';
-export const TEST_DB_URL =
-  process.env['TEST_DATABASE_URL'] ??
-  process.env['DATABASE_URL'] ??
-  'postgresql://postdash:postdash@127.0.0.1:5432/postdash';
+const RAW_TEST_DB_URL = process.env['TEST_DATABASE_URL'] ?? process.env['DATABASE_URL'];
+export const DB_REQUIRED = process.env['RUN_DB_TESTS'] === '1';
+export const SKIP_DB = process.env['SKIP_DB_TESTS'] === '1' || (!DB_REQUIRED && !RAW_TEST_DB_URL);
+export const TEST_DB_URL = RAW_TEST_DB_URL ?? '';
 
 const FORWARD_FILES = ['0001_phase1.sql', '0002_phase2.sql'];
 
@@ -56,6 +56,10 @@ export interface TestDbHandle {
  * Call in `beforeAll`; pass the returned `cleanup` to `afterAll`.
  */
 export async function setupTestDb(testName: string): Promise<TestDbHandle> {
+  if (!TEST_DB_URL) {
+    throw new Error('RUN_DB_TESTS=1 requires TEST_DATABASE_URL or DATABASE_URL pointing at Neon');
+  }
+
   const schema = `postdash_test_${testName}_${Math.random().toString(36).slice(2, 10)}`;
   // Admin client without scoped search_path — used once to CREATE SCHEMA.
   const admin = postgres(TEST_DB_URL, { max: 1, connect_timeout: 10, prepare: false });

@@ -52,8 +52,4 @@ export {
   type ValidateConnectCodeResult,
   type ValidateConnectCodeStatus,
 } from './connect-code-helpers.js';
-export {
-  assertWorkspaceRole,
-  ROLE_RANK,
-  type WorkspaceMinRole,
-} from './policies.js';
+export { assertWorkspaceRole, ROLE_RANK, type WorkspaceMinRole } from './policies.js';

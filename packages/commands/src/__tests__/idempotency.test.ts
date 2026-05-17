@@ -42,9 +42,7 @@ describe('runIdempotent', () => {
   it('replays a cached success via loadFromPointer', async () => {
     const mock = makeMockDb({
       insertResults: [[]], // conflict — someone else owns it
-      selectResults: [
-        [{ status: 'success', resultObjectType: 'user', resultObjectId: 'usr-1' }],
-      ],
+      selectResults: [[{ status: 'success', resultObjectType: 'user', resultObjectId: 'usr-1' }]],
     });
     const work = makeWork();
     const out = await runIdempotent(mock.db, CTX, work);
