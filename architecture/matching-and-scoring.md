@@ -609,16 +609,17 @@ should reset to page=1 rather than render the empty state.
 
 ## Status
 
-Active. Closed at tag `phase-5-perfect-r2`. Step-perfect-loop validation completed
+Active. Closed at tag `phase-5-perfect-r3`. Step-perfect-loop validation completed
 with final status ⚠ **UNREACHABLE_10 reason (a)** (scaffold-phase scope objectively
 caps below 10) — same closure pattern as Phase 4 (`phase-4-perfect-r4`). Best
 MIN=8 across the original memory-injection mode/fresh-agent confirm and the
 fresh r2 pass. r2 closed three residual code risks: cross-item cluster dedup
 retry loop, per-workspace fan-out silent loss, and ai_usage_events error-message
-length drift. The remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops
-items (Yandex circuit breaker, ai_usage_events token plumbing, RUN_DB_TESTS=1
-cluster-dedup integration tests, §12 mini-svg illustrations, slow-network
-warning) — all tracked in "Known follow-ups" above.
+length drift. r3 re-ran the gates with no runtime code changes required. The
+remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops items (Yandex circuit
+breaker, ai_usage_events token plumbing, RUN_DB_TESTS=1 cluster-dedup
+integration tests, §12 mini-svg illustrations, slow-network warning) — all
+tracked in "Known follow-ups" above.
 
 The original closure iterated 5 sub-loops total (4 in main_loop=1 + 1
 fresh-confirm in main_loop=2) and landed 20 distinct
@@ -627,7 +628,8 @@ correctness/audit fixes. Migrations 0009 (NULLS LAST radar index +
 topic_profiles partial index) and 0010 (extended radar index with
 `created_at DESC`) were introduced during the original loop. Reports:
 `.claude/perfect-loop-runs/2026-05-17-phase-5/REPORT.md` and
-`.codex/perfect-loop-runs/20260517-phase-5-r2/REPORT.md`.
+`.codex/perfect-loop-runs/20260517-phase-5-r2/REPORT.md` /
+`.codex/perfect-loop-runs/20260517-phase-5-r3/REPORT.md`.
 
 ## Last touched
 
