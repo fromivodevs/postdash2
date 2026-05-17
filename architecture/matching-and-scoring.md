@@ -486,40 +486,63 @@ last page" (re-request page=1 or show an empty-state with reset), NOT as
 total=0/page=1 onboarding-empty case; consumers paginating past the end
 should reset to page=1 rather than render the empty state.
 
-## Known follow-ups (Phase 5+ ops)
+## Known follow-ups (named owners in amended plan)
+
+> Все items ниже теперь имеют named-phase owner в
+> `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md` per "Phase Closure Discipline"
+> (запрет vague "Phase 8+ ops"). Cross-references показывают конкретную фазу +
+> bullet. Phase 5 scope больше не несёт эти items как открытые gap'ы — они
+> bounded и tracked downstream.
 
 - **Cost guard implementation.** `checkCostGuardStub` always returns true.
-  Phase 6 должен:
-  1. INSERT/UPDATE `ai_budget_state(workspace_id, day)` atomically.
-  2. Read current `spent_rub`.
-  3. Estimate cost of next call (prompt_tokens_estimate * input_rub + max_tokens * output_rub).
-  4. If spent + estimated > daily cap → `deferTask(until=next 00:00 UTC, reason='cost_cap_reached')`.
-  5. After successful call, UPDATE `ai_budget_state SET spent_rub += actual_cost`.
-  Hook is wired in `score-workspace-match.ts` — search for "cost guard STUB".
-- **Yandex usage parsing.** The score handler currently writes 0/0 to
-  `ai_usage_events.input_tokens` / `output_tokens`. Phase 6 should plumb the
-  parsed provider usage through when the provider exposes it.
-- **Suppress UI.** `suppressWorkspaceNewsMatch` command + zod input schema
-  + role check + operation_log entry shipped. Missing: HTTP route
-  (`PATCH /radar/:id/suppress`) + Mini App button. Phase 6+ when the UX
-  contract for "hide / dismiss / archive" is finalised.
-- **Per-workspace tunables.** `MATCHING_MIN_COSINE` and
-  `AUTO_DRAFT_SCORE_THRESHOLD` are global env vars. A workspace that
-  needs aggressive filtering can't override. Phase 8 admin UI hook.
-- **Source reliability_score backfill.** All sources currently have
-  `reliability_score=null` → component defaults to 5 (neutral). A Phase 8
-  ops job should backfill from `sources.last_fetch_status` history
-  (high ok-rate → high reliability).
-- **ai_usage_events retention.** Same pattern as `task_runs` (deferred in
-  Phase 4 follow-ups): unbounded append-only. Daily delete sweep on
-  `created_at < now() - interval '90 days'` belongs in scheduler.slowTick.
-- **Composite weight tunables.** Today 50/30/10/10 hardcoded in
-  `computeComposite`. Promote to env vars (`AI_SCORE_WEIGHT_LLM`, etc.)
-  when operators want to A/B test weighting strategies.
-- **Re-score on topic_profile update.** Today changing the topic profile
-  flips `embedding_status='pending'` (cosine component will be recomputed
-  for FUTURE matches), but EXISTING matches keep their old score.
-  Phase 8 should enqueue a `re_score_workspace` task on UpdateTopicProfile.
+  Полный flow (atomic UPDATE `ai_budget_state` + estimate + defer + actual
+  cost writeback) описан в `score-workspace-match.ts` ("cost guard STUB"
+  hook). → **Phase 6 Tasks bullet "cost guard check"** (исходный scope) +
+  **Phase 6 Catchup bullet "`ai_usage_events` token plumbing"** (база для
+  точного estimate).
+- **Yandex usage parsing.** Score handler пишет 0/0 в
+  `ai_usage_events.input_tokens` / `output_tokens`. → **Phase 6 Catchup
+  bullet "`ai_usage_events` token plumbing"**.
+- **Suppress UI.** Command + zod input + role check + operation_log entry
+  готовы. Missing: HTTP route (`PATCH /radar/:id/suppress`) + Mini App
+  кнопка. → **Phase 8a Tasks** (UX-контракт "hide / dismiss / archive"
+  фиксируется вместе с notifications opt-in scope).
+- **Per-workspace tunables.** `MATCHING_MIN_COSINE` и
+  `AUTO_DRAFT_SCORE_THRESHOLD` global env vars; workspace не может override.
+  → **Phase 8b Tasks bullet "per-workspace tunables UI"**.
+- **Source reliability_score backfill.** Все sources с `reliability_score=null`
+  → component defaults to 5 (neutral). → **Phase 8b Tasks bullet "source
+  `reliability_score` backfill job"**.
+- **`ai_usage_events` retention.** Unbounded append-only audit. → **Phase 6
+  Production Readiness Gates / Operational hygiene bullet** (90-day daily
+  sweep в scheduler.slowTick parallel с `task_runs` sweep из Phase 7).
+- **Composite weight tunables.** 50/30/10/10 hardcoded в `computeComposite`.
+  → **Phase 8b Tasks bullet "composite weight env-var promotion"**.
+- **Re-score on topic_profile update.** Existing matches не пересчитываются
+  при PATCH topic_profile. → **Phase 8b Tasks bullet "re-score on
+  topic_profile update / `re_score_workspace` task"**.
+- **`/radar` rate-limit.** Endpoint открыт без per-user / per-workspace
+  troughput cap. → **Phase 6 Catchup bullet "`GET /radar` rate-limit"**.
+- **`score-workspace-match` 4-SELECT → JOIN consolidation.** Handler делает
+  4 SELECT (news / topic / source / cluster) перед LLM call'ом. → **Phase 6
+  Catchup bullet "score-handler JOIN consolidation"**.
+- **`topic_profile_id` в `score_workspace_match` payload.** Matcher↔scorer
+  resolve-asymmetry при topic-race. → **Phase 6 Catchup bullet
+  "`topic_profile_id` в score-handler payload"**.
+- **`ai_usage_events.error_message` truncation drift.** Truncation
+  логика inline в score handler; risk of drift при добавлении generate /
+  rewrite. → **Phase 6 Catchup bullet "`ai_usage_events.error_message`
+  truncation hardening"** (shared util).
+- **Yandex circuit breaker.** На consecutive 5xx нет fast-fail; cascade
+  TemplateProvider waits для timeout. → **Phase 6 Catchup bullet
+  "Yandex circuit breaker"**.
+- **RUN_DB_TESTS=1 integration test harness** для Phase 5 dedup-сценариев.
+  → **Phase 7 Catchup bullet "Integration test harness (`RUN_DB_TESTS=1`)"**
+  (общая harness для 0..7 scaffold phases).
+- **§12 mini-svg illustrations + slow-network warning + skeleton 5-row +
+  `risk_flags` cap.** UI polish per design-system. → **Phase 8c Tasks**
+  (полный illustrated-empty-states + slow-network + skeletons + risk_flags
+  cap scope).
 
 ## Files
 

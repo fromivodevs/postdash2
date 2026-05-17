@@ -18,6 +18,74 @@ Acceptance: каждый чекпоинт включает edge cases из `12-E
 - Единственный чек-лист с чек-боксами — секция "Roadmap progress" в конце этого документа. Один `[x]` = одна завершённая фаза.
 - Когда ставишь `- [x] Phase N`, хук `stage-complete-detector` детектит ключевое слово "Phase N" и предлагает: запусти `/step-perfect-loop with full 5x5 depth` — фаза валидируется через lean core + `pl-plan-keeper` (проверка соответствия обещанию плана) + git diff всей фазы.
 
+## Phase Closure Discipline (NON-NEGOTIABLE)
+
+> Добавлено после Phase 5 closure (`phase-5-perfect-r3`), где step-perfect-loop
+> второй раз подряд закрылся не на PERFECT, а на ⚠ **UNREACHABLE_10 reason (a)**
+> ("scaffold-phase scope objectively caps below 10"). Корень: Phase 4 и Phase 5
+> откладывали ops-items на абстрактный "Phase 8+", вместо чего этот документ
+> теперь требует **именованных** future-phases для каждого deferred item.
+
+Закрытие фазы = step-perfect-loop возвращает **PERFECT (MIN=10)**. Не GOOD,
+не "GOOD с принятым trade-off", не UNREACHABLE_10. Если loop не достигает 10,
+фаза не закрывается — выбираем один из трёх вариантов:
+
+1. **Доделать в этой же фазе** до MIN=10 (предпочтительно, пока pl-implementer
+   ещё держит контекст).
+2. **Перенести конкретный item в named later phase** (например, "→ Phase 7,
+   bullet 'connect-time IP pinning'"). Откладывание без указания конкретной
+   фазы и конкретного bullet'а — запрещено.
+3. **Откатить `- [x]` обратно в `- [ ]`**, если синтезатор loop'а сообщает о
+   regression'е, который нельзя исправить локально, и доделать на следующей
+   итерации loop'а.
+
+**Правило именования deferred items.** Каждый bullet в "Known follow-ups"
+секции `architecture/<system>.md` ОБЯЗАН иметь parallel bullet в `Tasks`
+секции конкретной будущей фазы этого документа. Vague формулировки
+"Phase 8+ ops", "after MVP", "когда-нибудь" — запрещены: они и были
+cap-источником для Phase 4/5.
+
+**Acceptance checklist (см. ниже)** обновлён: финальная строка теперь требует
+PERFECT (MIN=10). GOOD без upgrade-в-PERFECT — не зачёт.
+
+## Production Readiness Gates (per-phase template)
+
+Каждая фаза включает в свою `Tasks` секцию пункты из четырёх блоков ниже —
+даже если в этой фазе блок тривиальный (тогда один bullet "N/A в этой фазе —
+покрыто в Phase X bullet Y"). Это явная поверхность для pl-pessimist /
+pl-architect / pl-security-auditor / pl-ux-critic в step-perfect-loop:
+каждый зеркалит свой блок, и MIN=10 становится достижим без "scaffold scope
+ceiling".
+
+- **Resilience (pl-pessimist surface).** Что происходит при сбое внешней
+  зависимости, при краше процесса, при медленной/нестабильной сети.
+  Минимум на фазу: явная circuit-breaker / retry / max-attempts политика
+  для каждого нового внешнего вызова; graceful shutdown (SIGTERM drain) для
+  каждого нового daemon-процесса; chaos-test или regression-test "что
+  происходит, если эта зависимость недоступна 5 минут".
+- **Observability (pl-architect + admin/debug surface).** Что видит оператор,
+  когда сломалось. Минимум на фазу: structured-логи с trace-id для каждого
+  нового handler'а, метрики ключевых очередей / endpoint'ов, `/health` и
+  `/ready` probes для каждого нового daemon, append-only audit-запись для
+  каждой новой команды.
+- **Operational hygiene (migration-guard + dead-code-finder surface).**
+  Retention sweep для каждой новой append-only таблицы, периодическая
+  REINDEX/VACUUM политика для каждого нового горячего индекса (особенно
+  ivfflat), backup-rotation для каждого нового источника секретов,
+  encryption-at-rest для любой persisted credentials, env-var catalog в
+  `11-AI-PROVIDER.md` обновлён, "stranded-state reaper" для каждой новой
+  машины состояний (`status='pending' → permanent stuck`).
+- **UX polish (pl-ux-critic + design-system §15).** Design-system gate
+  пройден полностью: dark/light, 3 платформы, slow 4G, a11y APG (focus
+  rings, arrow-key navigation, aria-live), bundle delta в пределах §5.
+  Иллюстрации/skeleton'ы из §12 design-system'а **нарисованы в этой же
+  фазе** (не отложены "потом"); slow-network warning баннер показан для
+  каждого нового read endpoint'а.
+
+> ⚠ Если фаза честно не нуждается в одном из блоков, всё равно явно
+> запиши "N/A: <причина>" — это сигнал ревьюверам, что блок РАССМОТРЕН, а
+> не забыт.
+
 ## Phase branches and commit boundaries
 
 This repository keeps phases recoverable as cumulative branches.
@@ -371,6 +439,57 @@ Global news матчится на workspace topics и появляется в Ra
 - prompt versioning + `CHANGELOG.md`;
 - system_state for IAM refresh используется реально (Phase 4 был stub, теперь полный flow).
 
+#### Catchup from Phase 4/5 ops follow-ups (mandatory before closure)
+
+Эти items были помечены deferred при closure Phase 4 / Phase 5 и привязаны
+к Phase 6 в этой ревизии плана (вместо vague "Phase 8+"):
+
+- **`ai_usage_events` token plumbing** — score / generate / rewrite handlers
+  должны записывать parsed `input_tokens` / `output_tokens` из Yandex usage
+  response (сегодня в Phase 5 пишутся 0/0). Это база для cost guard ниже.
+- **`ai_usage_events.error_message` truncation hardening** — поднять truncation
+  на shared util (один helper, один CHECK), убрать drift между обработчиками.
+- **Yandex circuit breaker** — на трёх consecutive 5xx / network failures
+  для Yandex endpoint'а провайдер переходит в open-state на N минут и
+  немедленно роутит `score` / `generate` / `rewrite` в TemplateProvider
+  (без таймаутного ожидания). Closed-state восстанавливается через
+  half-open probe. Срабатывает в score / generate / rewrite handler'ах.
+- **`score-workspace-match` 4-SELECT → JOIN consolidation** — handler сегодня
+  делает 4 отдельных SELECT (news / topic / source / cluster) перед LLM
+  call'ом; объединить в один JOIN-запрос для снижения round-trip cost.
+- **`topic_profile_id` в `score_workspace_match` payload** — matcher выбирает
+  конкретный topic_profile при fan-out, но scorer повторяет тот же resolve
+  через subscription JOIN (асимметрия → потенциально другой profile при
+  гонке). Snapshot'нуть `topic_profile_id` в payload при enqueue.
+- **`GET /radar` rate-limit** — добавить per-user / per-workspace IP-rate-limit
+  (например, 60 req/min), surface как 429 + `Retry-After`.
+- **Worker `/health` + `/ready` endpoints** — Phase 4 deferred. Render expects
+  `/health`; worker daemon-процесс должен expose оба + ответить 503 во время
+  SIGTERM drain.
+- **SIGTERM drain для worker** — blocks new polls и awaits in-flight
+  dispatches до `WORKER_DRAIN_TIMEOUT_MS` (default 30s), затем exit.
+  Eliminates "task fall to janitor 5 min later on every deploy" pattern.
+
+#### Production Readiness Gates (Phase 6 surface)
+
+- **Resilience.** Circuit-breaker policy для каждого нового AI call'а (см.
+  catchup выше); cost-guard cap = circuit-breaker по бюджету; rewrite-lock
+  таймаут (`status='rewriting'` → автоматический unlock через N минут);
+  TemplateProvider fallback тестируется chaos-режимом ("убей Yandex env").
+- **Observability.** `ai_usage_events` теперь с реальными tokens + cost (см.
+  catchup); structured logs на каждом AI call'е (prompt_version, model,
+  duration_ms, status, fallback_reason); metric counter "AI calls deferred
+  by cost guard" surfaceится в admin/debug.
+- **Operational hygiene.** Daily retention sweep для `ai_usage_events`
+  (>90 дней) в scheduler.slowTick (parallel с task_runs sweep, см. Phase 7);
+  prompt versioning в `CHANGELOG.md` ревьюится как часть release; cost-guard
+  pricing env vars документированы в `11-AI-PROVIDER.md §13`.
+- **UX polish.** Editor screen полностью по `13-MINIAPP-DESIGN-SYSTEM.md`:
+  skeleton placeholder на 5 строк во время AI rewrite, "Сеть медленная..."
+  баннер при >3s response time, отдельный empty-state для "no drafts yet",
+  focus rings + arrow-key nav на rewrite-button бар, iOS keyboard viewport
+  fix реально протестирован на устройстве.
+
 ### Tests
 - cost cap reached → task deferred + UI banner;
 - 00:00 UTC promote deferred → pending;
@@ -422,6 +541,61 @@ Global news матчится на workspace topics и появляется в Ra
   - bot lost admin → status='failed', UX banner;
   - channel deleted → channel_connections.status='broken'.
 
+#### Catchup from Phase 4 ops follow-ups (mandatory before closure)
+
+Эти items были помечены deferred при closure Phase 4 и привязаны к Phase 7
+в этой ревизии плана (вместо vague "Phase 8+"):
+
+- **Stranded `global_news_items` reaper** — periodic task который сканирует
+  `status='embedded'` rows старше N часов и re-enqueue'ит `cluster_news`
+  плюс backfill `embedding_status='failed'` → retry. Новый task type +
+  CHECK migration + scheduler tick + rate-limiting (no thundering herd).
+- **`cluster_news` orphan-cluster window fix** — `SELECT ... FOR UPDATE` на
+  nearest-neighbour's cluster row внутри одного `client.begin()`, чтобы
+  concurrent matchers не INSERT'или два разных `news_clusters` row'а для
+  одного и того же neighbour.
+- **`task_runs` retention** — daily `DELETE FROM task_runs WHERE finished_at
+  < now() - interval '30 days'` в scheduler.slowTick (или hot/cold table
+  partition, если volume оправдает).
+- **`ai_usage_events` retention** — параллельный sweep на 90 дней (Phase 5
+  follow-up).
+- **`ivfflat` REINDEX policy** — autoselect `lists = sqrt(n)` для
+  `news_clusters.centroid` и `global_news_items.embedding` индексов; cron job
+  раз в неделю проверяет n vs lists и REINDEX'ит, если drift > 2x.
+- **`sources.status='error'` retry cadence env var** — promote hardcoded
+  60-min interval в `scheduler.fastTick` до `SOURCES_ERROR_RETRY_INTERVAL_MINUTES`.
+- **Connect-time IP pinning** для fetch — custom `https.Agent({ lookup })`
+  (или undici `connect.lookup`) который pins IPs возвращённые SSRF guard'ом,
+  закрывая TOCTOU между resolve и TCP connect.
+- **`system_state` token encryption-at-rest** — writethrough callback
+  encrypt'ит IAM token перед persist (минимум через app-level symmetric key
+  из env; полный Vault/KMS — Phase 12 billing блок).
+- **`global_news_items.url` CHECK constraint** — `CHECK (url ~ '^https?://')`
+  + migration backfill / cleanup для существующих rows.
+- **Integration test harness (`RUN_DB_TESTS=1`)** для всех scaffold-фаз 0..7:
+  transient Postgres + mock Yandex, end-to-end сценарии из § Tests каждой
+  предыдущей фазы. Это закрывает gap "unit-тесты проходят, wiring-drift
+  невидим", который был общим breaker'ом во всех phase loops.
+
+#### Production Readiness Gates (Phase 7 surface)
+
+- **Resilience.** Telegram 429 → respect `retry_after`; bot lost admin → graceful
+  channel.status='broken' + UX banner; janitor для `publish_events.status='pending'`
+  старше 5 min уже в основном scope — здесь же chaos-test "Telegram API down".
+- **Observability.** Publish-funnel метрики (queued / pending / success / failed /
+  unknown) с trace-id; admin/debug page surfaceит `publish_events.status='unknown'`
+  для оператора (catchup item ниже из Phase 8); structured-логи на каждой
+  Telegram API operation с rate-limit headers.
+- **Operational hygiene.** Retention sweeps добавлены в scheduler.slowTick
+  (см. catchup выше); ivfflat REINDEX policy задокументирована в
+  `architecture/global-ingestion.md`; env-var каталог в
+  `11-AI-PROVIDER.md` обновлён всеми новыми переменными из catchup'а.
+- **UX polish.** Publish confirmation modal по `13-MINIAPP-DESIGN-SYSTEM.md`
+  (focus trap, escape-to-close, primary/destructive action contrast);
+  "channel deleted" / "bot lost admin" banner'ы — не toast'ы (persistent,
+  с action-кнопкой "Reconnect"); preview перед publish использует тот же
+  `packages/shared/telegram-format.ts`, что и editor (Phase 6).
+
 ### Tests
 - happy path: draft → publish → message in channel;
 - double-click → один publish_event;
@@ -447,9 +621,15 @@ Global news матчится на workspace topics и появляется в Ra
 ## Phase 8 — MVP hardening, notifications, source health
 
 ### Goal
-MVP готов для 10–30 early users.
+MVP готов для 10–30 early users. Структурирован в четыре под-блока (8a–8d),
+каждый закрывает свой "ops-debt" слой. Все четыре сделаны до закрытия фазы
+(MIN=10 = все четыре PERFECT).
 
-### Tasks
+---
+
+### 8a — Notifications + source health (продуктовый scope)
+
+#### Tasks
 - table `notification_events` с UNIQUE `(workspace_id, user_id, kind, related_object_id)`;
 - notifications opt-in (default off);
 - coalesce notification ("5 новых high-score за час");
@@ -458,42 +638,89 @@ MVP готов для 10–30 early users.
 - deep-link в notifications: `?startapp=draft_<id>` / `?startapp=radar_filter_<id>`;
 - Mini App cache-busting (`?v=<commit_sha>` в bot URL);
 - "Проверить сейчас" кнопка на source → `fetch_source` task с priority=80;
-- source health UI:
-  - last_fetched_at relative;
-  - last_fetch_status / error;
-  - ETA next fetch;
-- empty states polish;
-- error states polish (graceful "draft no longer available", и т.д.);
-- offline indicator + disable mutation buttons;
-- basic admin/debug page (read-only): tasks pending, failed_permanent, ai_usage_events daily sum, publish failures;
-- setup docs (`README.md` operational руководство, env-vars list);
-- rate-limit polish:
-  - max sources per workspace;
-  - max manual fetches per hour;
-  - max rewrites per draft per hour;
-- AI fallback verification:
-  - chaos test: убить Yandex endpoint в env → TemplateProvider работает;
-  - cost cap reached → user видит баннер с countdown.
+- source health UI: last_fetched_at relative, last_fetch_status / error, ETA next fetch;
+- rate-limit polish: max sources per workspace, max manual fetches per hour, max rewrites per draft per hour;
+- AI fallback verification chaos-test: убить Yandex endpoint в env → TemplateProvider работает; cost cap reached → user видит баннер с countdown.
 
-### Tests
+#### Tests
 - duplicate notification (тот же kind+related_id) → unique constraint;
 - bot blocked → `blocked_bot` status, не пытаемся retry;
 - coalesce: 20 high-score за час → 1 notification;
 - cache-bust работает после deploy (URL содержит новый sha);
-- source check now → task immediately picked up workers;
-- offline state в Mini App → publish disabled;
-- daily admin dashboard queries возвращают correct counts.
+- source check now → task immediately picked up workers.
 
-### Done when
+---
+
+### 8b — Observability + admin/debug (operator scope)
+
+#### Tasks
+- basic admin/debug page (read-only): tasks pending / failed_permanent counts, `ai_usage_events` daily sum (with новые tokens columns из Phase 6 catchup), publish failures, `publish_events.status='unknown'` queue, scheduler last-tick timestamps, Yandex circuit-breaker state;
+- per-workspace tunables UI: `MATCHING_MIN_COSINE` / `AUTO_DRAFT_SCORE_THRESHOLD` override per workspace (Phase 5 follow-up — было vague "Phase 8 admin UI hook");
+- composite weight env-var promotion: `AI_SCORE_WEIGHT_LLM` / `_COSINE` / `_FRESHNESS` / `_RELIABILITY` (Phase 5 follow-up);
+- source `reliability_score` backfill job на основе `sources.last_fetch_status` history (Phase 5 follow-up);
+- re-score on topic_profile update — task `re_score_workspace` enqueue'ит UpdateTopicProfileCommand, переоценивает existing `workspace_news_matches` rows (Phase 5 follow-up);
+- setup docs (`README.md` operational руководство, env-vars list) — финальный pass после 6/7/8a/8b catchup'а.
+
+#### Tests
+- daily admin dashboard queries возвращают correct counts;
+- per-workspace tunable override применяется к новым match задачам (existing — не трогает);
+- re_score_workspace на UpdateTopicProfileCommand → existing matches переоценены;
+- composite weight env-var override применяется без миграции.
+
+---
+
+### 8c — UI polish per design-system §6 / §12 (UX completion scope)
+
+#### Tasks
+- иллюстрации для empty-states (§12.1) — все Radar / Sources / Topics / Drafts экраны имеют illustrated empty state (mini-svg в `apps/miniapp/src/assets/`);
+- slow-network warning баннер (§6) — `<3G || >3s response` показывает "Сеть медленная..." на Radar / Editor / Publish экранах;
+- skeleton placeholders (§12.2) — Radar 5-row skeleton (вместо текущего spinner), Editor textarea-shaped skeleton, drafts list-row skeleton;
+- `risk_flags` cap — UI показывает максимум 3 badge'а + "+N more" tooltip (Phase 5 follow-up — uncapped риск списка ломает layout);
+- offline indicator + disable mutation buttons (§7) — globally inferred из `navigator.onLine` + WebApp.platform offline event;
+- empty states polish — отдельный UX для "no drafts yet" vs "no drafts matching filter" (Phase 5 паттерн уже применён для Radar — распространить на Drafts/Sources);
+- error states polish — "draft no longer available", "publish target removed", "topic deleted while editing" — все имеют clear recovery action;
+- a11y APG pass: focus rings + arrow-key navigation на каждом composite виджете нового scope (tabs, filter chips, version dropdown, rewrite-button bar);
+- bundle delta verification: §5 budget'ы не превышены после всех Phase 6–8 экранов;
+- Lighthouse mobile ≥ 90 final pass.
+
+#### Tests
+- design-review checklist `13-MINIAPP-DESIGN-SYSTEM.md §15` пройден полностью (dark/light, 3 платформы, slow 4G, a11y);
+- bundle-size CI gate зелёный;
+- visual regression tests на 4 illustrated empty states.
+
+---
+
+### 8d — Resilience completion (last-mile reliability scope)
+
+#### Tasks
+- offline state в Mini App — publish / generate / rewrite кнопки disabled, queued operations replay при reconnect;
+- circuit-breaker dashboard в admin/debug (Yandex circuit state, Telegram channel-broken count);
+- cost guard countdown banner — точный время reset (next 00:00 UTC) + сумма deferred задач;
+- final chaos pass: убить DB connection mid-publish, mid-rewrite, mid-fetch — ни одна операция не должна оставить inconsistent state (всё либо завершается, либо janitor подбирает).
+
+#### Tests
+- offline state в Mini App → publish disabled, queued op replay'ится после reconnect;
+- DB chaos: kill connection mid-publish → janitor finalize_pending_publishes подхватывает;
+- cost cap countdown точен (mock'ом дату);
+- circuit-breaker open → новые AI calls немедленно идут в TemplateProvider без таймаут-ожидания.
+
+---
+
+### Done when (Phase 8 as a whole)
 - продукт даём первым 10–30 users без developer intervention;
-- ошибки не ломают flow;
-- AI costs bounded by guard;
-- onboarding понятен;
-- source health visible;
-- notifications не флудят.
+- ошибки не ломают flow (8a + 8d покрывают);
+- AI costs bounded by guard + circuit breaker (8d);
+- onboarding понятен (8c illustrated empty states);
+- source health visible (8a);
+- notifications не флудят (8a coalesce + throttle);
+- operator видит здоровье системы в одном месте (8b admin/debug);
+- per-workspace tunables работают (8b);
+- design-system gate §15 пройден полностью (8c);
+- chaos passes зелёные (8d).
 
 ### Commit
-`phase-8-mvp-hardening`
+`phase-8-mvp-hardening` (один tag на финальный pass; промежуточные коммиты
+с префиксами `[phase 8a]` / `[phase 8b]` / `[phase 8c]` / `[phase 8d]`).
 
 ---
 
@@ -535,7 +762,9 @@ MVP готов для 10–30 early users.
 - Lighthouse mobile ≥ 90 для Mini App (с Phase 6);
 - bundle size в пределах budget'а §5 doc 13;
 - `npm test` / `pytest` / `tsc --noEmit` зелёные;
-- запущен `/step-perfect-loop with full 5x5 depth` (см. "Roadmap progress" ниже), вернул PERFECT или GOOD с принятыми trade-off.
+- все четыре Production Readiness Gates блока (Resilience / Observability / Operational hygiene / UX polish) явно перечислены в `Tasks` секции фазы — либо с реальными bullet'ами, либо с "N/A: <причина>" (см. "Production Readiness Gates" в начале документа);
+- каждый item из "Known follow-ups" секции `architecture/<system>.md` этой фазы либо закрыт здесь же, либо перенесён в `Tasks` секцию КОНКРЕТНОЙ named-later-phase (см. "Phase Closure Discipline");
+- запущен `/step-perfect-loop with full 5x5 depth` (см. "Roadmap progress" ниже), вернул **PERFECT (MIN=10)**. GOOD / UNREACHABLE_10 — не зачёт; см. "Phase Closure Discipline" в начале документа.
 
 (Чек-боксы намеренно без `[ ]` — это не runtime-чек-лист, а human-readable acceptance criteria. Runtime gate — это step-perfect-loop в конце фазы.)
 
@@ -551,6 +780,9 @@ MVP готов для 10–30 early users.
 - [x] Phase 3 — Topics and sources
 - [x] Phase 4 — Task system, global ingestion, embeddings
 - [x] Phase 5 — Matching and scoring
-- [ ] Phase 6 — AI draft generation, editor, cost guard
-- [ ] Phase 7 — Safe publishing
-- [ ] Phase 8 — MVP hardening, notifications, source health
+- [ ] Phase 6 — AI draft generation, editor, cost guard (включает Phase 4/5 catchup: ai_usage_events tokens, Yandex circuit breaker, worker /health + SIGTERM drain, score-handler JOIN consolidation, /radar rate-limit, topic_profile_id в payload)
+- [ ] Phase 7 — Safe publishing (включает Phase 4 catchup: stranded items reaper, cluster_news orphan-cluster fix, task_runs / ai_usage_events retention, ivfflat REINDEX, connect-time IP pinning, system_state encryption, global_news_items.url CHECK, sources.error retry env var, RUN_DB_TESTS=1 integration harness)
+- [ ] Phase 8a — Notifications + source health (продуктовый scope)
+- [ ] Phase 8b — Observability + admin/debug + per-workspace tunables + composite weights + re-score + reliability backfill (operator scope; включает Phase 5 catchup)
+- [ ] Phase 8c — UI polish per design-system §6 / §12 (illustrated empty states, slow-network warning, skeletons, risk_flags cap, a11y APG pass, bundle/lighthouse final gate)
+- [ ] Phase 8d — Resilience completion (offline mode, chaos passes, circuit-breaker dashboard, cost guard countdown)
