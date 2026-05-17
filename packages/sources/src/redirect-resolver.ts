@@ -10,6 +10,42 @@
  * Failures (timeout, network, max-hop) are NOT fatal: the caller falls back
  * to canonicalizing the raw input URL. Better to have a less-deduped source
  * than to reject the user's input on a transient HEAD failure.
+ *
+ * # Security: SSRF + DNS rebinding
+ *
+ * The resolver issues HTTP requests to user-supplied URLs. Three layers
+ * defend against SSRF / rebinding:
+ *
+ * 1. **Pre-fetch IP allowlist** (`checkUrlNotPrivate`) — rejects RFC1918,
+ *    loopback, link-local, IPv4-mapped/compat IPv6, and IPv6 ULA before any
+ *    outbound traffic. Resolves the hostname via `defaultDnsLookup`
+ *    (authoritative, bypasses OS cache) and re-checks on every redirect hop.
+ *
+ * 2. **Post-fetch DNS stability check** (`checkDnsStability`) — re-resolves
+ *    after the fetch and rejects if (a) any pre-check IP dropped from the
+ *    set, OR (b) a new private IP appeared. Public-IP set expansion (load
+ *    balancer growth) is accepted. Detects the classic rebinding attack
+ *    where attacker DNS flips between our check and the fetch.
+ *
+ * 3. **Blind-oracle property** — the resolver returns no response body, only
+ *    the Location header value and HTTP status. Even a successful rebind
+ *    leaks at most a single 3xx redirect target + status code, which is
+ *    minimal-signal blind SSRF.
+ *
+ * **Residual gap (Phase 4 hardening):** the post-fetch check is detective,
+ * not preventive — the TCP connect inside `fetch()` happens between our
+ * pre-check and post-check, so a single internal HTTP request CAN reach a
+ * private IP before we reject. For Phase 3 (resolver as blind oracle) this
+ * is acceptable. **Phase 4's content fetcher MUST upgrade to true
+ * connect-time IP pinning** via either:
+ *   - a custom `https.Agent({ lookup })` that returns the pre-resolved IP
+ *     at TCP-connect time (no new dependency), OR
+ *   - undici dispatcher with `connect.lookup` (requires adding `undici` as
+ *     a workspace dep).
+ *
+ * The exported `ResolvedHostSnapshot` is the seam: Phase 4 captures it from
+ * `checkUrlNotPrivate` and feeds it into the connect-time lookup, closing
+ * the TOCTOU window deterministically.
  */
 
 /** Max redirect hops we'll follow. bit.ly + cf-redirect + canonical = 3 hops on a normal day. 5 covers pathological chains. */
@@ -130,12 +166,55 @@ function isBlockedIpv6(ipString: string): { blocked: boolean; reason?: string } 
  */
 type DnsLookupFn = (host: string) => Promise<Array<{ address: string; family: number }>>;
 
+/**
+ * Default DNS lookup — uses `resolve4` + `resolve6` to hit the AUTHORITATIVE
+ * resolver, bypassing the OS-level getaddrinfo cache.
+ *
+ * Why not `dns.lookup`: `dns.lookup` goes through libc's `getaddrinfo`, which
+ * uses the OS cache. During a DNS rebinding window the OS may return a stale
+ * cached IP that doesn't reflect what the attacker's DNS authority is
+ * currently serving — giving our stability check a false "stable" signal even
+ * when the attacker is actively flipping the A-record. `resolve4`/`resolve6`
+ * speak directly to the configured DNS resolver (per Node's `dns.setServers`),
+ * so the stability check sees what the attacker is actually advertising right
+ * now. (Security audit round 5 improvement #3.)
+ *
+ * Tolerates absent IPv4 or IPv6 records: each NOENT/ENODATA is treated as
+ * "no records of this family", not a hard failure. Only when BOTH families
+ * fail do we surface an error; the caller fails open in that case.
+ *
+ * **Future hardening (Phase 4 scope):** true IP-pinning at TCP-connect time
+ * via a custom `https.Agent({ lookup })` or undici dispatcher would close
+ * the residual TOCTOU window between this resolution and the fetch's own
+ * `connect()`. The current detection-only approach catches the attack
+ * post-hoc and is sufficient for a blind-oracle resolver, but the Phase 4
+ * fetcher (which DOES return content to the matcher) MUST upgrade to
+ * connect-time pinning before going live. See `ResolvedHostSnapshot` export.
+ */
 async function defaultDnsLookup(host: string): Promise<Array<{ address: string; family: number }>> {
-  // Lazy import keeps the module browser-safe (the resolver is server-only
-  // but `@postdash/sources` is also imported by command-layer code that
-  // runs in Vitest's jsdom env in some test scenarios).
   const dns = await import('node:dns');
-  return dns.promises.lookup(host, { all: true });
+  const out: Array<{ address: string; family: number }> = [];
+  // Parallel-fetch both families. Either failing alone is fine; only a total
+  // resolution failure surfaces as an error.
+  const [v4, v6] = await Promise.allSettled([
+    dns.promises.resolve4(host),
+    dns.promises.resolve6(host),
+  ]);
+  if (v4.status === 'fulfilled') {
+    for (const address of v4.value) out.push({ address, family: 4 });
+  }
+  if (v6.status === 'fulfilled') {
+    for (const address of v6.value) out.push({ address, family: 6 });
+  }
+  if (out.length === 0) {
+    // Both families failed. Throw so checkUrlNotPrivate's catch fails open.
+    const v4Err = v4.status === 'rejected' ? v4.reason : undefined;
+    const v6Err = v6.status === 'rejected' ? v6.reason : undefined;
+    throw new Error(
+      `dns resolve failed for ${host}: v4=${v4Err?.code ?? 'ok'} v6=${v6Err?.code ?? 'ok'}`,
+    );
+  }
+  return out;
 }
 
 /**

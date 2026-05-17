@@ -336,6 +336,38 @@ describe('resolveRedirect: SSRF defence', () => {
     expect(r.error).toContain('rebinding');
   });
 
+  it('honours a dnsLookup that returns mixed v4+v6 families (authoritative resolve shape)', async () => {
+    // The new defaultDnsLookup merges resolve4+resolve6 results; emulate that
+    // shape via the injected dnsLookup. Both families public → no block.
+    const dns = async () => [
+      { address: '93.184.216.34', family: 4 } as const,
+      { address: '2606:2800:220:1:248:1893:25c8:1946', family: 6 } as const,
+    ];
+    const f = mockFetchChain([{ url: 'https://dual.example/', status: 200 }]);
+    const r = await resolveRedirect('https://dual.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('no_redirect');
+  });
+
+  it('blocks when v6 record is link-local even if v4 is public (any-private-rejects)', async () => {
+    const dns = async () => [
+      { address: '93.184.216.34', family: 4 } as const,
+      { address: 'fe80::1', family: 6 } as const,
+    ];
+    const f = vi.fn();
+    const r = await resolveRedirect('https://mixed-v6.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('fe80::/10');
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it('skips DNS stability check for bare-IP hosts (no DNS to rebind)', async () => {
     const dns = vi.fn(); // should not be called
     const f = mockFetchChain([{ url: 'https://93.184.216.34/', status: 200 }]);
