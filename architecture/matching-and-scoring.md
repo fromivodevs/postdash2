@@ -496,10 +496,9 @@ should reset to page=1 rather than render the empty state.
   4. If spent + estimated > daily cap → `deferTask(until=next 00:00 UTC, reason='cost_cap_reached')`.
   5. After successful call, UPDATE `ai_budget_state SET spent_rub += actual_cost`.
   Hook is wired in `score-workspace-match.ts` — search for "cost guard STUB".
-- **Yandex usage parsing.** `CompletionResponseSchema` already captures
-  `result.usage.{inputTextTokens, completionTokens, totalTokens}` but the
-  score handler currently writes 0/0 to `ai_usage_events.input_tokens` /
-  `output_tokens`. Phase 6 should plumb the parsed usage through.
+- **Yandex usage parsing.** The score handler currently writes 0/0 to
+  `ai_usage_events.input_tokens` / `output_tokens`. Phase 6 should plumb the
+  parsed provider usage through when the provider exposes it.
 - **Suppress UI.** `suppressWorkspaceNewsMatch` command + zod input schema
   + role check + operation_log entry shipped. Missing: HTTP route
   (`PATCH /radar/:id/suppress`) + Mini App button. Phase 6+ when the UX
@@ -568,12 +567,14 @@ should reset to page=1 rather than render the empty state.
 - `packages/ai/src/__tests__/yandex-score.test.ts` — 10 tests covering
   success, clamp, truncation, markdown fences, repair-attempt, refused,
   HTTP status mapping, network failure.
-- `packages/commands/src/__tests__/workspace-news-matches.test.ts` — 12
-  zod schema tests (no DB).
-- `apps/worker/src/__tests__/score-composite.test.ts` — 4 composite tests
-  (weight math + clamping + neutral defaults + freshness decay).
-- `apps/worker/src/__tests__/match-helpers.test.ts` — 15 helper tests
-  (negative-keyword match, cosineSim, parseEmbedding, buildTopicText).
+- `packages/commands/src/__tests__/workspace-news-matches.test.ts` — 15
+  schema + upsert concurrency tests.
+- `apps/worker/src/__tests__/score-composite.test.ts` — 6 tests
+  (weight math + clamping + neutral defaults + freshness decay +
+  ai_usage_events error truncation).
+- `apps/worker/src/__tests__/match-helpers.test.ts` — 23 helper tests
+  (negative-keyword match, cosineSim, parseEmbedding, fanout failure retry
+  classification, buildTopicText).
 - `apps/worker/src/__tests__/dispatcher.test.ts` — `stubAiConfig` extended.
 - `apps/api/src/__tests__/routes-radar.test.ts` — 5 route tests
   (happy path, invalid query, status=all + score filters, 401, 503).
@@ -608,22 +609,25 @@ should reset to page=1 rather than render the empty state.
 
 ## Status
 
-Active. Closed at tag `phase-5-perfect`. Step-perfect-loop validation completed
+Active. Closed at tag `phase-5-perfect-r2`. Step-perfect-loop validation completed
 with final status ⚠ **UNREACHABLE_10 reason (a)** (scaffold-phase scope objectively
 caps below 10) — same closure pattern as Phase 4 (`phase-4-perfect-r4`). Best
-MIN=8 across both memory-injection mode (main_loop=1) and fresh-agent confirm
-(main_loop=2 sub_loop=1). All reviewers reported `blockers=[]` in the steady
-state; remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops items
-(Yandex circuit breaker, ai_usage_events token plumbing + err.message truncation,
-RUN_DB_TESTS=1 cluster-dedup integration tests, §12 mini-svg illustrations,
-slow-network warning) — all tracked in "Known follow-ups" above.
+MIN=8 across the original memory-injection mode/fresh-agent confirm and the
+fresh r2 pass. r2 closed three residual code risks: cross-item cluster dedup
+retry loop, per-workspace fan-out silent loss, and ai_usage_events error-message
+length drift. The remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops
+items (Yandex circuit breaker, ai_usage_events token plumbing, RUN_DB_TESTS=1
+cluster-dedup integration tests, §12 mini-svg illustrations, slow-network
+warning) — all tracked in "Known follow-ups" above.
 
-Loop iterated 5 sub-loops total (4 in main_loop=1 + 1 fresh-confirm in
-main_loop=2) and landed 20 distinct correctness/security/perf/UX fixes across
-~35 file edits. Migrations 0009 (NULLS LAST radar index + topic_profiles
-partial index) and 0010 (extended radar index with `created_at DESC`) were
-introduced during the loop. Full loop report:
-`.claude/perfect-loop-runs/2026-05-17-phase-5/REPORT.md`.
+The original closure iterated 5 sub-loops total (4 in main_loop=1 + 1
+fresh-confirm in main_loop=2) and landed 20 distinct
+correctness/security/perf/UX fixes across ~35 file edits. r2 added 3 targeted
+correctness/audit fixes. Migrations 0009 (NULLS LAST radar index +
+topic_profiles partial index) and 0010 (extended radar index with
+`created_at DESC`) were introduced during the original loop. Reports:
+`.claude/perfect-loop-runs/2026-05-17-phase-5/REPORT.md` and
+`.codex/perfect-loop-runs/20260517-phase-5-r2/REPORT.md`.
 
 ## Last touched
 
