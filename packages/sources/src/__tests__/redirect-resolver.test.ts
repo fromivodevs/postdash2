@@ -122,3 +122,130 @@ describe('resolveRedirect', () => {
     expect(r.finalUrl).toBe('https://example.com/');
   });
 });
+
+describe('resolveRedirect: SSRF defence', () => {
+  // SSRF tests force-enable the check (would otherwise be auto-skipped when
+  // a mock fetch is injected without an explicit dnsLookup).
+  const dnsAllPublic = async () => [{ address: '93.184.216.34', family: 4 } as const];
+
+  it('blocks loopback IPv4 (127.0.0.1) before any fetch', async () => {
+    const f = vi.fn();
+    const r = await resolveRedirect('http://127.0.0.1/admin', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('127.0.0.0/8');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('blocks AWS metadata endpoint (169.254.169.254) before any fetch', async () => {
+    const f = vi.fn();
+    const r = await resolveRedirect('http://169.254.169.254/latest/meta-data/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('169.254.0.0/16');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['http://10.0.0.5/', '10.0.0.0/8'],
+    ['http://172.16.5.5/', '172.16.0.0/12'],
+    ['http://192.168.1.1/', '192.168.0.0/16'],
+  ])('blocks RFC1918 range: %s', async (url, expectedReason) => {
+    const f = vi.fn();
+    const r = await resolveRedirect(url, {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain(expectedReason);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('blocks IPv6 loopback ::1', async () => {
+    const f = vi.fn();
+    const r = await resolveRedirect('http://[::1]/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('blocks a redirect hop that targets a private IP (302 → 169.254.x)', async () => {
+    const f = mockFetchChain([
+      { url: 'https://public.example/', status: 302, location: 'http://169.254.169.254/secrets' },
+    ]);
+    const r = await resolveRedirect('https://public.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('169.254.0.0/16');
+  });
+
+  it('allows public IPs when DNS lookup returns a public address', async () => {
+    const f = mockFetchChain([{ url: 'https://example.com/', status: 200 }]);
+    const r = await resolveRedirect('https://example.com/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('no_redirect');
+  });
+
+  it.each([
+    ['http://[::ffff:127.0.0.1]/', '127.0.0.0/8'],
+    ['http://[::ffff:169.254.169.254]/', '169.254.0.0/16'],
+    ['http://[::ffff:10.0.0.1]/', '10.0.0.0/8'],
+  ])('blocks IPv4-mapped IPv6: %s', async (url, expectedReason) => {
+    const f = vi.fn();
+    const r = await resolveRedirect(url, {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain(expectedReason);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    // ::a.b.c.d form (deprecated IPv4-compat)
+    ['http://[::127.0.0.1]/'],
+    // WHATWG canonical form ::HHHH:HHHH for the same address (`127.0.0.1` = 0x7f00:0001)
+    ['http://[::7f00:1]/'],
+  ])('blocks deprecated IPv4-compatible IPv6: %s', async (url) => {
+    const f = vi.fn();
+    const r = await resolveRedirect(url, {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('blocks when ANY of multiple DNS addresses is private (mixed A-records)', async () => {
+    const mixed = async () => [
+      { address: '93.184.216.34', family: 4 } as const,
+      { address: '10.0.0.5', family: 4 } as const,
+    ];
+    const f = vi.fn();
+    const r = await resolveRedirect('https://mixed.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: mixed,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(f).not.toHaveBeenCalled();
+  });
+});

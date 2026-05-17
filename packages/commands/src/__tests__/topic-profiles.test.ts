@@ -51,7 +51,8 @@ describe('createTopicProfile', () => {
   it('inserts a new profile when none exists', async () => {
     const mock = makeMockDb({
       selectResults: [policyOk('editor'), []],
-      insertResults: [[topicRow({ name: 'New' })]],
+      // topic_profiles INSERT, then operation_log INSERT
+      insertResults: [[topicRow({ name: 'New' })], []],
     });
     const r = await createTopicProfile(mock.db, {
       workspaceId: WORKSPACE,
@@ -69,6 +70,8 @@ describe('createTopicProfile', () => {
   it('updates the existing active profile (upsert semantics) and invalidates embedding', async () => {
     const mock = makeMockDb({
       selectResults: [policyOk('editor'), [topicRow()]],
+      // topic_profiles UPDATE, then operation_log INSERT
+      insertResults: [[]],
       updateResults: [
         [
           topicRow({
@@ -142,6 +145,7 @@ describe('updateTopicProfile', () => {
     const mock = makeMockDb({
       selectResults: [policyOk('editor'), [{ id: TOPIC, workspaceId: WORKSPACE }]],
       updateResults: [[topicRow({ name: 'Renamed' })]],
+      insertResults: [[]], // operation_log insert
     });
     await updateTopicProfile(mock.db, {
       topicProfileId: TOPIC,
@@ -151,6 +155,21 @@ describe('updateTopicProfile', () => {
     });
     expect(mock.calls).toContain('update');
   });
+
+  it('rejects deeply nested tone_profile (JSON-bomb defence)', async () => {
+    const mock = makeMockDb({});
+    // Build a 12-deep nested object — exceeds MAX_TONE_PROFILE_DEPTH=8.
+    let bomb: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 12; i++) bomb = { x: bomb };
+    await expect(
+      updateTopicProfile(mock.db, {
+        topicProfileId: TOPIC,
+        workspaceId: WORKSPACE,
+        userId: USER,
+        toneProfile: bomb,
+      }),
+    ).rejects.toMatchObject({ code: 'validation_failed' });
+  });
 });
 
 describe('deleteTopicProfile', () => {
@@ -158,6 +177,7 @@ describe('deleteTopicProfile', () => {
     const mock = makeMockDb({
       selectResults: [policyOk('editor'), [{ id: TOPIC, workspaceId: WORKSPACE }]],
       updateResults: [[topicRow({ status: 'disabled' })]],
+      insertResults: [[]], // operation_log insert
     });
     await deleteTopicProfile(mock.db, {
       topicProfileId: TOPIC,

@@ -24,6 +24,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { vector } from 'drizzle-orm/pg-core';
@@ -359,6 +360,13 @@ export const topicProfiles = pgTable(
     ),
     check('topic_profiles_status_check', sql`${t.status} IN ('active', 'disabled')`),
     index('topic_profiles_workspace_idx').on(t.workspaceId, t.status),
+    // Phase 3 hardening (migration 0004): partial UNIQUE — at most one
+    // active profile per workspace. Closes the SELECT-then-INSERT race in
+    // createTopicProfile. Drizzle's `uniqueIndex(...).where(...)` mirrors
+    // the same CREATE UNIQUE INDEX ... WHERE clause from 0004.
+    uniqueIndex('topic_profiles_one_active_per_workspace_uniq')
+      .on(t.workspaceId)
+      .where(sql`${t.status} = 'active'`),
   ],
 );
 
@@ -442,6 +450,13 @@ export const workspaceSourceSubscriptions = pgTable(
     ),
     index('workspace_source_subscriptions_source_idx').on(t.sourceId, t.enabled),
     index('workspace_source_subscriptions_workspace_idx').on(t.workspaceId, t.enabled),
+    // Phase 3 hardening (migration 0004): partial UNIQUE for the
+    // default-profile subscription. NULL topic_profile_id rows are now
+    // deduplicated at the DB layer, enabling single-statement ON CONFLICT
+    // upsert in createSource. Closes the SELECT-then-INSERT race.
+    uniqueIndex('workspace_source_subscriptions_default_per_source_uniq')
+      .on(t.workspaceId, t.sourceId)
+      .where(sql`${t.topicProfileId} IS NULL`),
   ],
 );
 

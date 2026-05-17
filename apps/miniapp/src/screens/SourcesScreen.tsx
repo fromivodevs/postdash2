@@ -13,7 +13,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Button,
   Cell,
@@ -52,6 +52,13 @@ export function SourcesScreen(): ReactNode {
     enabled: Boolean(initData),
   });
 
+  // Per-source pending state. React Query's mutation pendingState is global
+  // to the mutation instance — without per-row tracking, every row's button
+  // freezes while ANY row is in flight. We track the active source_id
+  // separately so only the row being mutated shows the loading state.
+  const [pendingToggleSourceId, setPendingToggleSourceId] = useState<string | null>(null);
+  const [pendingDeleteSourceId, setPendingDeleteSourceId] = useState<string | null>(null);
+
   const toggleMutation = useMutation<
     SourceSubscriptionProjection,
     Error,
@@ -60,6 +67,12 @@ export function SourcesScreen(): ReactNode {
     mutationFn: async ({ sourceId, enabled }) => {
       if (!initData) throw new Error('initData is missing');
       return patchSource(initData, sourceId, { enabled });
+    },
+    onMutate: ({ sourceId }) => {
+      setPendingToggleSourceId(sourceId);
+    },
+    onSettled: () => {
+      setPendingToggleSourceId(null);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SOURCES_QUERY_KEY });
@@ -73,6 +86,12 @@ export function SourcesScreen(): ReactNode {
     mutationFn: async (sourceId) => {
       if (!initData) throw new Error('initData is missing');
       await deleteSource(initData, sourceId);
+    },
+    onMutate: (sourceId) => {
+      setPendingDeleteSourceId(sourceId);
+    },
+    onSettled: () => {
+      setPendingDeleteSourceId(null);
     },
     onSuccess: () => {
       showSnackbar({ text: 'Источник удалён.' });
@@ -134,8 +153,8 @@ export function SourcesScreen(): ReactNode {
               toggleMutation.mutate({ sourceId: item.source.id, enabled })
             }
             onDelete={() => deleteMutation.mutate(item.source.id)}
-            toggling={toggleMutation.isPending}
-            deleting={deleteMutation.isPending}
+            toggling={pendingToggleSourceId === item.source.id}
+            deleting={pendingDeleteSourceId === item.source.id}
           />
         ))}
       </List>

@@ -73,10 +73,13 @@ describe('createSource', () => {
 
   it('inserts a fresh source + subscription on first add', async () => {
     const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://example.com/feed.xml' });
-    const fresh = sourceRow();
+    // After xmax-via-RETURNING: rows include `inserted: boolean`.
+    const fresh = { ...sourceRow(), inserted: true };
+    const freshSub = { ...subscriptionRow(), inserted: true };
     const mock = makeMockDb({
-      selectResults: [policyOk('editor'), []],
-      insertResults: [[fresh], [subscriptionRow()]],
+      selectResults: [policyOk('editor')],
+      // sources upsert RETURNING, subscription upsert RETURNING, operation_log INSERT
+      insertResults: [[fresh], [freshSub], []],
     });
     const r = await createSource(
       mock.db,
@@ -96,14 +99,12 @@ describe('createSource', () => {
 
   it('reuses the existing global source when canonical_url collides (cross-workspace dedup)', async () => {
     const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://example.com/feed.xml' });
-    // sourceCreated = false when createdAt < updatedAt (existing row was UPDATEd, not INSERTed).
-    const existing = sourceRow({
-      createdAt: new Date('2026-01-01T00:00:00Z'),
-      updatedAt: new Date('2026-05-17T00:00:00Z'),
-    });
+    // existing row from ON CONFLICT DO UPDATE → xmax != 0 → inserted: false.
+    const existing = { ...sourceRow(), inserted: false };
+    const freshSub = { ...subscriptionRow(), inserted: true };
     const mock = makeMockDb({
-      selectResults: [policyOk('editor'), []],
-      insertResults: [[existing], [subscriptionRow()]],
+      selectResults: [policyOk('editor')],
+      insertResults: [[existing], [freshSub], []],
     });
     const r = await createSource(
       mock.db,
@@ -116,17 +117,17 @@ describe('createSource', () => {
       { resolveRedirect: resolve },
     );
     expect(r.sourceCreated).toBe(false);
-    // Subscription is fresh — the OTHER workspace had this source, ours
-    // didn't.
     expect(r.subscriptionCreated).toBe(true);
   });
 
-  it('re-enables an existing disabled subscription on re-add', async () => {
+  it('re-enables an existing disabled subscription on re-add (ON CONFLICT DO UPDATE)', async () => {
     const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://example.com/feed.xml' });
+    const fresh = { ...sourceRow(), inserted: true };
+    // existing subscription → xmax != 0 (inserted: false) → re-enabled by DO UPDATE.
+    const reEnabled = { ...subscriptionRow({ enabled: true }), inserted: false };
     const mock = makeMockDb({
-      selectResults: [policyOk('editor'), [subscriptionRow({ enabled: false })]],
-      insertResults: [[sourceRow()]],
-      updateResults: [[subscriptionRow({ enabled: true })]],
+      selectResults: [policyOk('editor')],
+      insertResults: [[fresh], [reEnabled], []],
     });
     const r = await createSource(
       mock.db,
@@ -140,7 +141,30 @@ describe('createSource', () => {
     );
     expect(r.subscriptionCreated).toBe(false);
     expect(r.subscription.enabled).toBe(true);
-    expect(mock.calls).toContain('update');
+  });
+
+  it('rejects topic_profile_id pointing at a disabled profile with conflict', async () => {
+    const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://example.com/feed.xml' });
+    const mock = makeMockDb({
+      selectResults: [
+        policyOk('editor'),
+        // topic_profile exists, same workspace, but status='disabled'
+        [{ workspaceId: WORKSPACE, status: 'disabled' }],
+      ],
+    });
+    await expect(
+      createSource(
+        mock.db,
+        {
+          workspaceId: WORKSPACE,
+          userId: USER,
+          url: 'https://example.com/feed.xml',
+          type: 'rss',
+          topicProfileId: TOPIC,
+        },
+        { resolveRedirect: resolve },
+      ),
+    ).rejects.toMatchObject({ code: 'conflict' });
   });
 
   it('rejects topic_profile_id from a different workspace with forbidden', async () => {
@@ -148,7 +172,7 @@ describe('createSource', () => {
     const mock = makeMockDb({
       selectResults: [
         policyOk('editor'),
-        [{ workspaceId: '99999999-9999-9999-9999-999999999999' }],
+        [{ workspaceId: '99999999-9999-9999-9999-999999999999', status: 'active' }],
       ],
     });
     await expect(
@@ -167,12 +191,12 @@ describe('createSource', () => {
   });
 
   it('does not block source creation when redirect resolution fails (fallback to input URL)', async () => {
-    // The resolver returns the input URL on network error per its contract;
-    // createSource simply canonicalizes whatever the resolver returned.
     const resolve = vi.fn().mockResolvedValue({ finalUrl: 'https://offline.example/' });
+    const fresh = { ...sourceRow({ url: 'https://offline.example/', canonicalUrl: 'https://offline.example/' }), inserted: true };
+    const freshSub = { ...subscriptionRow(), inserted: true };
     const mock = makeMockDb({
-      selectResults: [policyOk('editor'), []],
-      insertResults: [[sourceRow({ url: 'https://offline.example/', canonicalUrl: 'https://offline.example/' })], [subscriptionRow()]],
+      selectResults: [policyOk('editor')],
+      insertResults: [[fresh], [freshSub], []],
     });
     const r = await createSource(
       mock.db,
@@ -201,9 +225,13 @@ describe('updateSourceSubscription', () => {
     ).rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('updates enabled and priority on the subscription', async () => {
+  it('updates enabled and priority on the subscription and returns joined source', async () => {
     const mock = makeMockDb({
-      selectResults: [policyOk('editor'), [{ id: SUBSCRIPTION }]],
+      selectResults: [
+        policyOk('editor'),
+        [{ id: SUBSCRIPTION }], // loadOwnedSubscription
+        [sourceRow()], // joined source SELECT after update
+      ],
       updateResults: [[subscriptionRow({ enabled: false, priority: 30 })]],
     });
     const r = await updateSourceSubscription(mock.db, {
@@ -213,8 +241,9 @@ describe('updateSourceSubscription', () => {
       enabled: false,
       priority: 30,
     });
-    expect(r.enabled).toBe(false);
-    expect(r.priority).toBe(30);
+    expect(r.subscription.enabled).toBe(false);
+    expect(r.subscription.priority).toBe(30);
+    expect(r.source.id).toBe(SOURCE);
   });
 });
 
@@ -229,6 +258,51 @@ describe('deleteSourceSubscription', () => {
       sourceId: SOURCE,
     });
     expect(mock.deleteCount).toBe(1);
+  });
+});
+
+describe('createSource: bulk add (20 sources sequentially)', () => {
+  // Plan promises a bulk-add (20 sources) test (08-IMPLEMENTATION-ROADMAP.md).
+  // This validates the command path under a realistic batch — all 20 must
+  // succeed, each with its own SELECT-policy + INSERT-source + INSERT-sub +
+  // INSERT-operation_log script slots.
+  it('20 sequential createSource calls all succeed with global dedup discipline', async () => {
+    const N = 20;
+    const resolve = vi.fn(async (url: string) => ({ finalUrl: url }));
+
+    // Build 20 distinct canonical URLs. All collide on canonical_url=>UNIQUE
+    // would prevent duplicate global rows; here each is unique so each is
+    // sourceCreated=true.
+    const selectScript: unknown[][] = [];
+    const insertScript: unknown[][] = [];
+    for (let i = 0; i < N; i++) {
+      selectScript.push(policyOk('editor'));
+      insertScript.push(
+        [{ ...sourceRow({ id: `source-${i}`, canonicalUrl: `https://feed-${i}.example/rss` }), inserted: true }],
+        [{ ...subscriptionRow({ id: `sub-${i}`, sourceId: `source-${i}` }), inserted: true }],
+        [], // operation_log
+      );
+    }
+    const mock = makeMockDb({ selectResults: selectScript, insertResults: insertScript });
+
+    const results = [];
+    for (let i = 0; i < N; i++) {
+      results.push(
+        await createSource(
+          mock.db,
+          {
+            workspaceId: WORKSPACE,
+            userId: USER,
+            url: `https://feed-${i}.example/rss`,
+            type: 'rss',
+          },
+          { resolveRedirect: resolve },
+        ),
+      );
+    }
+    expect(results).toHaveLength(N);
+    expect(results.every((r) => r.sourceCreated && r.subscriptionCreated)).toBe(true);
+    expect(resolve).toHaveBeenCalledTimes(N);
   });
 });
 

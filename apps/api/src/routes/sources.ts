@@ -27,6 +27,7 @@ import {
   readCurrentUser,
   updateSourceSubscription,
 } from '@postdash/commands';
+// listSources is still used by GET /sources; keep the import.
 import { extractInitData } from '../auth/extract-initdata.js';
 import { sanitizeCommandError, sanitizeInitDataError } from './error-mapping.js';
 import { projectSourceSubscription } from './topics-projection.js';
@@ -159,19 +160,10 @@ export async function sourcesRoute(app: FastifyInstance, deps: SourcesRouteDeps)
           ...(body.priority !== undefined && { priority: body.priority }),
           ...(body.topic_profile_id !== undefined && { topicProfileId: body.topic_profile_id }),
         });
-        // Re-read source for projection (PATCH only writes subscription, the
-        // source row is unchanged — we need it to build the wire response).
-        // Cheap: source rows are tiny and the workspace already has the row
-        // in its subscription list cache.
-        const list = await listSources(app.pool.db, {
-          workspaceId: guard.currentUser.defaultWorkspace.id,
-          userId: guard.currentUser.user.id,
-        });
-        const match = list.find((entry) => entry.subscription.id === updated.id);
-        if (!match) {
-          throw new CommandError('internal', 'updated subscription vanished from list');
-        }
-        void reply.status(200).send(projectSourceSubscription(match));
+        // updateSourceSubscription returns the joined source row directly —
+        // no second query needed (prev. version re-ran listSources for the
+        // whole workspace, an N-row read just to project one).
+        void reply.status(200).send(projectSourceSubscription(updated));
         return undefined as never;
       } catch (err) {
         return handleCommandError(req, reply, err, 'updateSourceSubscription');

@@ -21,12 +21,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import {
   Button,
   ErrorState,
+  FieldError,
   Placeholder,
   Section,
   Spinner,
   useSnackbar,
 } from '../components/index.ts';
 import { useBackButton } from '../telegram/useBackButton.ts';
+import { useMainButton } from '../telegram/useMainButton.ts';
 import { useSession } from '../session/SessionProvider.tsx';
 import { getTopics, postTopic, type PostTopicInput } from '../api/topics.ts';
 import type { TopicProfileListProjection, TopicProfileProjection } from '../api/types.ts';
@@ -58,6 +60,9 @@ export function SettingsScreen(): ReactNode {
   const [mainTopics, setMainTopics] = useState('');
   const [keywords, setKeywords] = useState('');
   const [negativeKeywords, setNegativeKeywords] = useState('');
+  // §7 FieldError tier — validation messages live next to the offending
+  // input, not in a transient bottom toast that disappears in 3 seconds.
+  const [nameError, setNameError] = useState<string | null>(null);
 
   useEffect(() => {
     if (existing) {
@@ -83,6 +88,37 @@ export function SettingsScreen(): ReactNode {
     },
   });
 
+  const onSave = (): void => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      // Inline field error per §7 (FieldError tier), not snackbar — snackbars
+      // disappear and don't tell screen readers WHICH field is wrong.
+      setNameError('Укажи название.');
+      return;
+    }
+    setNameError(null);
+    saveMutation.mutate({
+      name: trimmedName,
+      language,
+      main_topics: splitTags(mainTopics),
+      keywords: splitTags(keywords),
+      negative_keywords: splitTags(negativeKeywords),
+    });
+  };
+
+  // §4 native chrome: sticky-bottom MainButton is the primary CTA. Hook
+  // ALWAYS runs (Rules of Hooks) — visibility is gated on the loaded state
+  // so the button hides during initial load + error states. The in-page
+  // "Сохранить" Button below stays for non-Telegram dev (useMainButton no-ops
+  // outside Telegram).
+  useMainButton({
+    visible: !topicsQuery.isLoading && !topicsQuery.isError,
+    text: 'Сохранить',
+    onClick: onSave,
+    loading: saveMutation.isPending,
+    enabled: !saveMutation.isPending && name.trim().length > 0,
+  });
+
   if (topicsQuery.isLoading) {
     return (
       <Section header="Настройки">
@@ -101,21 +137,6 @@ export function SettingsScreen(): ReactNode {
     );
   }
 
-  const onSave = (): void => {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      showSnackbar({ text: 'Укажи название.', tone: 'danger' });
-      return;
-    }
-    saveMutation.mutate({
-      name: trimmedName,
-      language,
-      main_topics: splitTags(mainTopics),
-      keywords: splitTags(keywords),
-      negative_keywords: splitTags(negativeKeywords),
-    });
-  };
-
   return (
     <Section header="Настройки">
       {!existing && (
@@ -132,10 +153,16 @@ export function SettingsScreen(): ReactNode {
             className="settings-form__input"
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (nameError) setNameError(null);
+            }}
             placeholder="Например, Tech"
             aria-label="Название темы"
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError ? 'topic-name-error' : undefined}
           />
+          <FieldError id="topic-name-error" message={nameError} />
         </label>
 
         <label className="settings-form__field">
@@ -164,7 +191,7 @@ export function SettingsScreen(): ReactNode {
         </label>
 
         <label className="settings-form__field">
-          <span className="settings-form__label">Ключевые слова</span>
+          <span className="settings-form__label">Ключевые слова (через запятую)</span>
           <input
             className="settings-form__input"
             type="text"
@@ -176,7 +203,7 @@ export function SettingsScreen(): ReactNode {
         </label>
 
         <label className="settings-form__field">
-          <span className="settings-form__label">Стоп-слова</span>
+          <span className="settings-form__label">Стоп-слова (через запятую)</span>
           <input
             className="settings-form__input"
             type="text"

@@ -73,28 +73,27 @@ The `createTopicProfile` command checks at write time: if an active profile alre
 
 ## Files
 
-- `packages/db/migrations/0003_phase3.sql` + `.down.sql` — schema.
-- `packages/db/src/schema.ts` — Drizzle definitions (mirrors 0003 exactly).
+- `packages/db/migrations/0003_phase3.sql` + `.down.sql` — Phase 3 schema (3 tables).
+- `packages/db/migrations/0004_phase3_hardening.sql` + `.down.sql` — partial UNIQUE indices closing two race windows (added during step-perfect-loop main-1).
+- `packages/db/src/schema.ts` — Drizzle definitions (mirrors both 0003 and 0004 exactly).
 - `packages/sources/src/canonicalize.ts` — URL canonicalization rules + `canonicalize(url)` + `CANONICALIZATION_RULE_VERSION` constant.
-- `packages/sources/src/redirect-resolver.ts` — `resolveRedirect(url)` one-time HTTP follow.
+- `packages/sources/src/redirect-resolver.ts` — `resolveRedirect(url)` one-time HTTP follow + SSRF guard (private/loopback/link-local/IPv4-mapped/IPv4-compat blocklist + per-hop re-check + total-budget timeout).
 - `packages/sources/src/index.ts` — re-exports.
-- `packages/sources/src/__tests__/canonicalize.test.ts` — 15+ cases (scheme, www, trailing slash, utm, sort, fragment, HN/Reddit/X overrides, date-param edge).
-- `packages/sources/src/__tests__/redirect-resolver.test.ts` — mock fetch, max-hop, timeout, fallback.
+- `packages/sources/src/__tests__/canonicalize.test.ts` — 23 cases (scheme, www, trailing slash, utm, sort, fragment, HN/Reddit/X overrides, idempotence).
+- `packages/sources/src/__tests__/redirect-resolver.test.ts` — 22 cases (mock fetch, max-hop, timeout, HEAD-405 GET fallback, relative location, plus SSRF defence: loopback, AWS metadata, RFC1918, IPv6 ::1, IPv4-mapped, IPv4-compat, multi-record mixed-private).
 - `packages/domain/src/topic.ts` — pure types: `TopicProfile`, `TopicProfileLanguage`, narrowers.
 - `packages/domain/src/source.ts` — `Source`, `SourceType`, `SourceStatus`, `WorkspaceSourceSubscription`, narrowers.
-- `packages/commands/src/create-topic-profile.ts` — upsert semantics for MVP single-profile.
-- `packages/commands/src/update-topic-profile.ts`
-- `packages/commands/src/delete-topic-profile.ts`
-- `packages/commands/src/list-topic-profiles.ts`
-- `packages/commands/src/create-source.ts` — does redirect + canonicalize + source upsert + subscription insert.
-- `packages/commands/src/list-sources.ts` — joins subscription with source.
-- `packages/commands/src/update-source-subscription.ts` — enabled / priority / topic_profile_id.
-- `packages/commands/src/delete-source-subscription.ts`
+- `packages/commands/src/topic-profiles.ts` — consolidated module: `createTopicProfile` (upsert + 23505-retry), `updateTopicProfile`, `deleteTopicProfile` (soft-delete), `listTopicProfiles`. All write `operation_log` (Rule 6). `validateToneProfileDepth` for JSON-bomb defence.
+- `packages/commands/src/sources.ts` — consolidated module: `createSource` (resolve + canonicalize + ON CONFLICT global-source upsert + subscription upsert via partial unique index + topic-profile-active check), `updateSourceSubscription` (returns joined source for single-row PATCH), `deleteSourceSubscription`, `listSources`. All write `operation_log`. xmax-via-RETURNING for insert-vs-update.
+- `packages/commands/src/topic-row-mappers.ts` — Phase 3 row → domain mappers.
 - `apps/api/src/routes/topics.ts` — CRUD endpoints.
-- `apps/api/src/routes/sources.ts` — CRUD endpoints.
-- `apps/miniapp/src/screens/SettingsScreen.tsx` — topic profile edit form.
-- `apps/miniapp/src/screens/SourcesScreen.tsx` — sources list + add/toggle/delete.
+- `apps/api/src/routes/sources.ts` — CRUD endpoints. PATCH /sources projects from joined return — no second query.
+- `apps/api/src/routes/topics-projection.ts` — domain → wire projections.
+- `apps/miniapp/src/screens/SettingsScreen.tsx` — topic profile upsert form. MainButton wired (§4), FieldError for validation (§7).
+- `apps/miniapp/src/screens/SourcesScreen.tsx` — sources list + per-row toggle/delete pending state.
+- `apps/miniapp/src/screens/AddSourceScreen.tsx` — URL+type form. MainButton wired, inputMode=url, FieldError.
 - `apps/miniapp/src/api/topics.ts` + `apps/miniapp/src/api/sources.ts` — clients.
+- `packages/shared/src/topic-source-projection.ts` — wire schemas (Zod) shared between API + miniapp.
 
 ## Interfaces
 
@@ -163,7 +162,7 @@ type SourceSubscriptionProjection = {
 
 1. **Canonicalization mismatch between subscriptions:** if rules change post-MVP, two workspaces' subscriptions could end up pointing at different `sources` rows for the same logical feed. Mitigation: `canonicalization_rule_version` lets the Phase 4 backfill detect drift and merge.
 2. **Redirect resolution fragility:** sources behind aggressive bot-blockers will fail HEAD. Fallback to canonicalizing raw URL avoids breaking source creation, but means the dedupe may miss `bit.ly/x` vs `medium.com/y`. Acceptable for MVP.
-3. **No DB-level "single topic profile per workspace" constraint:** the upsert semantics is in the command layer only. A direct INSERT bypassing the command would create a second profile. Phase 5+ either drops the constraint entirely or adds a partial unique index, whichever the UX picks.
+3. **~~No DB-level "single topic profile per workspace" constraint~~ — RESOLVED:** migration `0004_phase3_hardening.sql` adds the partial unique index `topic_profiles_one_active_per_workspace_uniq ON topic_profiles (workspace_id) WHERE status = 'active'`. `createTopicProfile` catches the 23505 unique violation on a race and retries (winner's row is then visible and lands on the UPDATE branch).
 4. **Subscription with `topic_profile_id` referencing another workspace's profile:** the command must verify `topic_profile.workspace_id == subscription.workspace_id`. Test coverage in Phase 3, hardened in Phase 5 when scoring actually reads the link.
 
 ## Edge cases covered

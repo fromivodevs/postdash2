@@ -27,10 +27,52 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TopicProfile } from '@postdash/domain';
 import type { Database, DbOrTx } from '@postdash/db';
-import { topicProfiles } from '@postdash/db';
+import { operationLog, topicProfiles } from '@postdash/db';
 import { CommandError } from './errors.js';
 import { assertWorkspaceRole } from './policies.js';
 import { rowToTopicProfile } from './topic-row-mappers.js';
+
+/**
+ * Postgres unique-violation SQLSTATE. Cast through `unknown` because Drizzle's
+ * thrown error is typed as `Error` but carries the postgres-js `.code` field
+ * at runtime.
+ */
+const PG_UNIQUE_VIOLATION = '23505';
+
+function isUniqueViolation(err: unknown): boolean {
+  return Boolean(
+    err && typeof err === 'object' && (err as { code?: unknown }).code === PG_UNIQUE_VIOLATION,
+  );
+}
+
+/**
+ * Bounded depth for tone_profile jsonb. Mitigates a JSON-bomb attack
+ * (deep-nested object fits in the 16KB body limit but blows up Postgres's
+ * jsonb parser). Applied alongside Zod schema validation, BEFORE the DB write.
+ */
+const MAX_TONE_PROFILE_DEPTH = 8;
+const MAX_TONE_PROFILE_KEYS = 100;
+function validateToneProfileDepth(value: unknown, depth = 0, keyCount = { n: 0 }): void {
+  if (depth > MAX_TONE_PROFILE_DEPTH) {
+    throw new CommandError('validation_failed', 'tone_profile JSON exceeds max depth', {
+      code: 'tone_profile_too_deep',
+    });
+  }
+  if (value === null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) validateToneProfileDepth(item, depth + 1, keyCount);
+    return;
+  }
+  for (const [, v] of Object.entries(value as Record<string, unknown>)) {
+    keyCount.n += 1;
+    if (keyCount.n > MAX_TONE_PROFILE_KEYS) {
+      throw new CommandError('validation_failed', 'tone_profile exceeds max key count', {
+        code: 'tone_profile_too_many_keys',
+      });
+    }
+    validateToneProfileDepth(v, depth + 1, keyCount);
+  }
+}
 
 // =============================================================================
 // Schemas
@@ -100,58 +142,109 @@ export async function createTopicProfile(
     );
   }
   const data = parsed.data;
+  if (data.toneProfile) validateToneProfileDepth(data.toneProfile);
 
-  return db.transaction(async (tx) => {
-    await assertWorkspaceRole(tx, data.workspaceId, data.userId, 'editor');
+  // Race-safe upsert. Two concurrent callers from the same workspace can both
+  // see no existing active profile. Without the partial UNIQUE index in
+  // migration 0004 (`topic_profiles_one_active_per_workspace_uniq`), both
+  // INSERTs succeed and the workspace ends up with two active profiles. With
+  // the index, the loser's INSERT throws SQLSTATE 23505 — we catch, re-run
+  // the SELECT (now the winner's row is visible), and UPDATE it. This is the
+  // canonical Postgres "upsert via unique" pattern when ON CONFLICT can't
+  // target a partial index from a NULL-aware comparison.
+  return doCreateTopicProfileWithRetry(db, data, 0);
+}
 
-    const existing = await tx
-      .select()
-      .from(topicProfiles)
-      .where(
-        and(eq(topicProfiles.workspaceId, data.workspaceId), eq(topicProfiles.status, 'active')),
-      )
-      .limit(1);
+const MAX_UPSERT_RETRIES = 2;
 
-    if (existing[0]) {
-      const updated = await tx
-        .update(topicProfiles)
-        .set({
+async function doCreateTopicProfileWithRetry(
+  db: Database,
+  data: CreateTopicProfileInput,
+  attempt: number,
+): Promise<{ profile: TopicProfile; created: boolean }> {
+  try {
+    return await db.transaction(async (tx) => {
+      await assertWorkspaceRole(tx, data.workspaceId, data.userId, 'editor');
+
+      const existing = await tx
+        .select()
+        .from(topicProfiles)
+        .where(
+          and(eq(topicProfiles.workspaceId, data.workspaceId), eq(topicProfiles.status, 'active')),
+        )
+        .limit(1);
+
+      if (existing[0]) {
+        const updated = await tx
+          .update(topicProfiles)
+          .set({
+            name: data.name,
+            language: data.language,
+            mainTopics: data.mainTopics,
+            keywords: data.keywords,
+            negativeKeywords: data.negativeKeywords,
+            toneProfile: data.toneProfile ?? null,
+            // Invalidate the embedding — content changed, the old vector no
+            // longer represents the profile. Phase 4 enqueues a re-embed task
+            // when it sees embedding_status='pending'.
+            embeddingStatus: 'pending',
+            embeddingUpdatedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(topicProfiles.id, existing[0].id))
+          .returning();
+        const row = updated[0];
+        if (!row) throw new CommandError('internal', 'topic_profiles update returned no row');
+        await writeOperationLog(tx, data, row.id, 'update');
+        return { profile: rowToTopicProfile(row), created: false };
+      }
+
+      const inserted = await tx
+        .insert(topicProfiles)
+        .values({
+          workspaceId: data.workspaceId,
           name: data.name,
           language: data.language,
           mainTopics: data.mainTopics,
           keywords: data.keywords,
           negativeKeywords: data.negativeKeywords,
           toneProfile: data.toneProfile ?? null,
-          // Invalidate the embedding — content changed, the old vector no
-          // longer represents the profile. Phase 4 enqueues a re-embed task
-          // when it sees embedding_status='pending'.
-          embeddingStatus: 'pending',
-          embeddingUpdatedAt: null,
-          updatedAt: new Date(),
+          status: 'active',
         })
-        .where(eq(topicProfiles.id, existing[0].id))
         .returning();
-      const row = updated[0];
-      if (!row) throw new CommandError('internal', 'topic_profiles update returned no row');
-      return { profile: rowToTopicProfile(row), created: false };
+      const row = inserted[0];
+      if (!row) throw new CommandError('internal', 'topic_profiles insert returned no row');
+      await writeOperationLog(tx, data, row.id, 'create');
+      return { profile: rowToTopicProfile(row), created: true };
+    });
+  } catch (err) {
+    if (isUniqueViolation(err) && attempt < MAX_UPSERT_RETRIES) {
+      // Another caller won the race and created the active profile. Retry
+      // the whole transaction — the SELECT now sees the winner's row and
+      // we land on the UPDATE branch.
+      return doCreateTopicProfileWithRetry(db, data, attempt + 1);
     }
+    throw err;
+  }
+}
 
-    const inserted = await tx
-      .insert(topicProfiles)
-      .values({
-        workspaceId: data.workspaceId,
-        name: data.name,
-        language: data.language,
-        mainTopics: data.mainTopics,
-        keywords: data.keywords,
-        negativeKeywords: data.negativeKeywords,
-        toneProfile: data.toneProfile ?? null,
-        status: 'active',
-      })
-      .returning();
-    const row = inserted[0];
-    if (!row) throw new CommandError('internal', 'topic_profiles insert returned no row');
-    return { profile: rowToTopicProfile(row), created: true };
+async function writeOperationLog(
+  tx: DbOrTx,
+  data: { workspaceId: string; userId: string },
+  topicId: string,
+  action: 'create' | 'update' | 'delete',
+): Promise<void> {
+  // Per 02-ARCHITECTURE.md Rule 6: every command writes operation_log. Phase
+  // 1/2 commands honour this; Phase 3 originally missed it (caught in
+  // step-perfect-loop). payload_summary keeps zero PII — just the discriminator.
+  await tx.insert(operationLog).values({
+    workspaceId: data.workspaceId,
+    userId: data.userId,
+    commandType: action === 'create' ? 'CreateTopicProfile' : action === 'update' ? 'UpdateTopicProfile' : 'DeleteTopicProfile',
+    objectType: 'topic_profile',
+    objectId: topicId,
+    payloadSummary: { action },
+    result: 'success',
   });
 }
 
@@ -167,6 +260,7 @@ export async function updateTopicProfile(
     );
   }
   const data = parsed.data;
+  if (data.toneProfile) validateToneProfileDepth(data.toneProfile);
 
   return db.transaction(async (tx) => {
     await assertWorkspaceRole(tx, data.workspaceId, data.userId, 'editor');
@@ -211,6 +305,7 @@ export async function updateTopicProfile(
       .returning();
     const row = updated[0];
     if (!row) throw new CommandError('internal', 'topic_profiles update returned no row');
+    await writeOperationLog(tx, data, row.id, 'update');
     return rowToTopicProfile(row);
   });
 }
@@ -240,6 +335,7 @@ export async function deleteTopicProfile(
       .update(topicProfiles)
       .set({ status: 'disabled', updatedAt: new Date() })
       .where(eq(topicProfiles.id, existing.id));
+    await writeOperationLog(tx, data, existing.id, 'delete');
   });
 }
 

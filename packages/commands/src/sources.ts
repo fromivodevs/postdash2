@@ -30,10 +30,31 @@ import { z } from 'zod';
 import { canonicalize, resolveRedirect } from '@postdash/sources';
 import type { Source, WorkspaceSourceSubscription } from '@postdash/domain';
 import type { Database, DbOrTx } from '@postdash/db';
-import { sources, topicProfiles, workspaceSourceSubscriptions } from '@postdash/db';
+import { operationLog, sources, topicProfiles, workspaceSourceSubscriptions } from '@postdash/db';
 import { CommandError } from './errors.js';
 import { assertWorkspaceRole } from './policies.js';
 import { rowToSource, rowToSubscription } from './topic-row-mappers.js';
+
+/**
+ * Per-command operation_log writer. Phase 1/2 commands honour this rule;
+ * Phase 3 originally missed it (caught in step-perfect-loop). Logs the
+ * action discriminator and target object id only — no URL, no canonical_url,
+ * no API key fragments.
+ */
+async function writeSourceOperationLog(
+  tx: DbOrTx,
+  args: { workspaceId: string; userId: string; commandType: string; objectId: string; payload?: Record<string, unknown> },
+): Promise<void> {
+  await tx.insert(operationLog).values({
+    workspaceId: args.workspaceId,
+    userId: args.userId,
+    commandType: args.commandType,
+    objectType: 'workspace_source_subscription',
+    objectId: args.objectId,
+    payloadSummary: args.payload ?? {},
+    result: 'success',
+  });
+}
 
 // =============================================================================
 // Schemas
@@ -140,8 +161,13 @@ export async function createSource(
     // application-layer check matches the workspace check we run on the
     // subscription itself.
     if (data.topicProfileId) {
+      // Verify ownership AND active status. A soft-deleted (status='disabled')
+      // profile must not accept new subscription pins — otherwise a workspace
+      // with a stale Settings UI can attach a source to a profile that's been
+      // disabled, leading to "subscription pointed at a dead profile" state
+      // that Phase 4 matching has no defined behaviour for.
       const ownerRow = await tx
-        .select({ workspaceId: topicProfiles.workspaceId })
+        .select({ workspaceId: topicProfiles.workspaceId, status: topicProfiles.status })
         .from(topicProfiles)
         .where(eq(topicProfiles.id, data.topicProfileId))
         .limit(1);
@@ -153,13 +179,24 @@ export async function createSource(
           `topic_profile ${data.topicProfileId} belongs to a different workspace`,
         );
       }
+      if (owner.status !== 'active') {
+        throw new CommandError(
+          'conflict',
+          `topic_profile ${data.topicProfileId} is not active`,
+          { code: 'topic_profile_disabled' },
+        );
+      }
     }
 
-    // Upsert the global source via Drizzle's onConflictDoUpdate. The DO
-    // UPDATE branch is a no-op on the canonical_url itself but bumps
-    // updated_at so consumers can see "this source was touched recently"
-    // (and so the createdAt-vs-updatedAt comparison below can detect
-    // insert-vs-update without dropping to raw SQL + xmax).
+    // Upsert the global source. xmax-via-RETURNING is the canonical Postgres
+    // trick to distinguish "row was actually inserted" from "row already
+    // existed and DO UPDATE fired" — Postgres sets xmax=0 on fresh inserts,
+    // non-zero on rows visited by UPDATE. The previous heuristic
+    // (createdAt-vs-updatedAt within 5ms) was fragile across JS-vs-PG clocks.
+    //
+    // Drizzle exposes RETURNING-with-extras by appending a `sql` expression
+    // to the returning() object. The base columns come from `sources.<col>`,
+    // and `inserted: sql<boolean>...` adds the insert-vs-update bit.
     const upserted = await tx
       .insert(sources)
       .values({
@@ -174,71 +211,96 @@ export async function createSource(
       })
       .onConflictDoUpdate({
         target: sources.canonicalUrl,
+        // DO UPDATE bumps updated_at so consumers see "this source was
+        // touched recently"; the column itself is harmless to overwrite.
         set: { updatedAt: new Date() },
       })
-      .returning();
+      .returning({
+        id: sources.id,
+        type: sources.type,
+        url: sources.url,
+        canonicalUrl: sources.canonicalUrl,
+        name: sources.name,
+        fetchIntervalMinutes: sources.fetchIntervalMinutes,
+        maxItemsPerFetch: sources.maxItemsPerFetch,
+        reliabilityScore: sources.reliabilityScore,
+        lastFetchedAt: sources.lastFetchedAt,
+        lastFetchStatus: sources.lastFetchStatus,
+        lastFetchError: sources.lastFetchError,
+        canonicalizationRuleVersion: sources.canonicalizationRuleVersion,
+        status: sources.status,
+        createdAt: sources.createdAt,
+        updatedAt: sources.updatedAt,
+        // xmax = 0 on a fresh insert; non-zero on a row that fell into
+        // DO UPDATE. Cast to boolean for a clean wire shape.
+        inserted: sql<boolean>`xmax = 0`,
+      });
     const sourceRow = upserted[0];
     if (!sourceRow) throw new CommandError('internal', 'sources upsert returned no row');
     const sourceId = sourceRow.id;
-    // Insert-vs-update signal: a fresh insert has createdAt === updatedAt
-    // (both default to now()). An existing-row update keeps the older
-    // createdAt and bumps updatedAt to "now". A few-microsecond drift
-    // between Postgres clock reads on the same INSERT round-trip is
-    // possible, so we compare with a small tolerance.
-    const sourceCreated =
-      Math.abs(sourceRow.createdAt.getTime() - sourceRow.updatedAt.getTime()) < 5;
+    const sourceCreated = sourceRow.inserted === true;
 
     // Subscription UPSERT. Single-default MVP: subscriptions with
-    // topic_profile_id IS NULL use upsert semantics keyed by
-    // (workspace_id, source_id). With an explicit topic_profile_id,
-    // ON CONFLICT (workspace_id, source_id, topic_profile_id) handles the
-    // standard case.
+    // topic_profile_id IS NULL go through a single INSERT ... ON CONFLICT
+    // targeting the partial unique index from migration 0004
+    // (workspace_source_subscriptions_default_per_source_uniq). With an
+    // explicit topic_profile_id, ON CONFLICT (workspace_id, source_id,
+    // topic_profile_id) handles the standard case.
+    //
+    // The previous SELECT-then-INSERT-or-UPDATE path was race-prone (two
+    // concurrent POSTs could both pass the SELECT, both INSERT, and the
+    // 3-col UNIQUE was NULL-permissive). The partial unique index closes
+    // the race at the DB layer; the catch-23505 fallback handles two
+    // racers reaching INSERT simultaneously (one wins, the other lands on
+    // DO UPDATE).
     const topicProfileId = data.topicProfileId ?? null;
     let subscriptionCreated: boolean;
     let subscriptionRow:
-      | { id: string; workspaceId: string; sourceId: string; topicProfileId: string | null; enabled: boolean; priority: number; customRules: unknown; createdAt: Date; updatedAt: Date }
+      | { id: string; workspaceId: string; sourceId: string; topicProfileId: string | null; enabled: boolean; priority: number; customRules: unknown; createdAt: Date; updatedAt: Date; inserted?: boolean }
       | undefined;
 
     if (topicProfileId === null) {
-      // Look up existing default subscription explicitly because the
-      // 3-column UNIQUE treats two NULLs as distinct in Postgres.
-      const existing = await tx
-        .select()
-        .from(workspaceSourceSubscriptions)
-        .where(
-          and(
-            eq(workspaceSourceSubscriptions.workspaceId, data.workspaceId),
-            eq(workspaceSourceSubscriptions.sourceId, sourceId),
-            sql`${workspaceSourceSubscriptions.topicProfileId} IS NULL`,
-          ),
-        )
-        .limit(1);
-      if (existing[0]) {
-        // Re-enable if it was disabled — UX for "re-add a paused source".
-        const updated = await tx
-          .update(workspaceSourceSubscriptions)
-          .set({ enabled: true, updatedAt: new Date() })
-          .where(eq(workspaceSourceSubscriptions.id, existing[0].id))
-          .returning();
-        subscriptionRow = updated[0];
-        subscriptionCreated = false;
-      } else {
-        const inserted = await tx
-          .insert(workspaceSourceSubscriptions)
-          .values({
-            workspaceId: data.workspaceId,
-            sourceId,
-            topicProfileId: null,
-            enabled: true,
-            priority: 50,
-            customRules: {},
-          })
-          .returning();
-        subscriptionRow = inserted[0];
-        subscriptionCreated = true;
-      }
+      // Targeting `workspaceId, sourceId` columns. Drizzle issues
+      // ON CONFLICT (workspace_id, source_id) DO UPDATE — Postgres
+      // picks the partial unique index from migration 0004 because the
+      // INSERT row matches its WHERE topic_profile_id IS NULL predicate.
+      const upserted = await tx
+        .insert(workspaceSourceSubscriptions)
+        .values({
+          workspaceId: data.workspaceId,
+          sourceId,
+          topicProfileId: null,
+          enabled: true,
+          priority: 50,
+          customRules: {},
+        })
+        .onConflictDoUpdate({
+          target: [
+            workspaceSourceSubscriptions.workspaceId,
+            workspaceSourceSubscriptions.sourceId,
+          ],
+          targetWhere: sql`${workspaceSourceSubscriptions.topicProfileId} IS NULL`,
+          // Re-enable on re-add (UX: paused → active).
+          set: { enabled: true, updatedAt: new Date() },
+        })
+        .returning({
+          id: workspaceSourceSubscriptions.id,
+          workspaceId: workspaceSourceSubscriptions.workspaceId,
+          sourceId: workspaceSourceSubscriptions.sourceId,
+          topicProfileId: workspaceSourceSubscriptions.topicProfileId,
+          enabled: workspaceSourceSubscriptions.enabled,
+          priority: workspaceSourceSubscriptions.priority,
+          customRules: workspaceSourceSubscriptions.customRules,
+          createdAt: workspaceSourceSubscriptions.createdAt,
+          updatedAt: workspaceSourceSubscriptions.updatedAt,
+          inserted: sql<boolean>`xmax = 0`,
+        });
+      subscriptionRow = upserted[0];
+      subscriptionCreated = subscriptionRow?.inserted === true;
     } else {
-      // Pinned-profile path: rely on the 3-col UNIQUE.
+      // Pinned-profile path: rely on the 3-col UNIQUE in 0003. xmax is the
+      // canonical insert-vs-update discriminator (replaces the previous
+      // createdAt-vs-updatedAt heuristic).
       const inserted = await tx
         .insert(workspaceSourceSubscriptions)
         .values({
@@ -267,20 +329,23 @@ export async function createSource(
           customRules: workspaceSourceSubscriptions.customRules,
           createdAt: workspaceSourceSubscriptions.createdAt,
           updatedAt: workspaceSourceSubscriptions.updatedAt,
+          inserted: sql<boolean>`xmax = 0`,
         });
       subscriptionRow = inserted[0];
-      // We can't distinguish insert from update via xmax through Drizzle's
-      // returning(); query for it: if created_at == updated_at it was an
-      // insert. Approximate (good enough for the UX hint — both branches
-      // produce a usable subscription either way).
-      subscriptionCreated = Boolean(
-        subscriptionRow && subscriptionRow.createdAt.getTime() === subscriptionRow.updatedAt.getTime(),
-      );
+      subscriptionCreated = subscriptionRow?.inserted === true;
     }
 
     if (!subscriptionRow) {
       throw new CommandError('internal', 'subscription upsert returned no row');
     }
+
+    await writeSourceOperationLog(tx, {
+      workspaceId: data.workspaceId,
+      userId: data.userId,
+      commandType: 'CreateSource',
+      objectId: subscriptionRow.id,
+      payload: { source_created: sourceCreated, subscription_created: subscriptionCreated },
+    });
 
     return {
       source: rowToSource(sourceRow),
@@ -294,7 +359,7 @@ export async function createSource(
 export async function updateSourceSubscription(
   db: Database,
   input: UpdateSourceSubscriptionInput,
-): Promise<WorkspaceSourceSubscription> {
+): Promise<{ subscription: WorkspaceSourceSubscription; source: Source }> {
   const parsed = UpdateSourceSubscriptionInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new CommandError(
@@ -308,8 +373,13 @@ export async function updateSourceSubscription(
     await assertWorkspaceRole(tx, data.workspaceId, data.userId, 'editor');
 
     if (data.topicProfileId) {
+      // Verify ownership AND active status. A soft-deleted (status='disabled')
+      // profile must not accept new subscription pins — otherwise a workspace
+      // with a stale Settings UI can attach a source to a profile that's been
+      // disabled, leading to "subscription pointed at a dead profile" state
+      // that Phase 4 matching has no defined behaviour for.
       const ownerRow = await tx
-        .select({ workspaceId: topicProfiles.workspaceId })
+        .select({ workspaceId: topicProfiles.workspaceId, status: topicProfiles.status })
         .from(topicProfiles)
         .where(eq(topicProfiles.id, data.topicProfileId))
         .limit(1);
@@ -319,6 +389,13 @@ export async function updateSourceSubscription(
         throw new CommandError(
           'forbidden',
           `topic_profile ${data.topicProfileId} belongs to a different workspace`,
+        );
+      }
+      if (owner.status !== 'active') {
+        throw new CommandError(
+          'conflict',
+          `topic_profile ${data.topicProfileId} is not active`,
+          { code: 'topic_profile_disabled' },
         );
       }
     }
@@ -337,7 +414,27 @@ export async function updateSourceSubscription(
       .returning();
     const row = updated[0];
     if (!row) throw new CommandError('internal', 'subscription update returned no row');
-    return rowToSubscription(row);
+
+    // Single-row fetch of the joined source so the route can project without
+    // re-running listSources. PK lookup → cheap, no JOIN.
+    const sourceRows = await tx
+      .select()
+      .from(sources)
+      .where(eq(sources.id, data.sourceId))
+      .limit(1);
+    const sourceRow = sourceRows[0];
+    if (!sourceRow) {
+      throw new CommandError('internal', `source ${data.sourceId} vanished mid-update`);
+    }
+
+    await writeSourceOperationLog(tx, {
+      workspaceId: data.workspaceId,
+      userId: data.userId,
+      commandType: 'UpdateSourceSubscription',
+      objectId: row.id,
+    });
+
+    return { subscription: rowToSubscription(row), source: rowToSource(sourceRow) };
   });
 }
 
@@ -364,6 +461,12 @@ export async function deleteSourceSubscription(
     await tx
       .delete(workspaceSourceSubscriptions)
       .where(eq(workspaceSourceSubscriptions.id, existing.id));
+    await writeSourceOperationLog(tx, {
+      workspaceId: data.workspaceId,
+      userId: data.userId,
+      commandType: 'DeleteSourceSubscription',
+      objectId: existing.id,
+    });
   });
 }
 
@@ -411,9 +514,11 @@ async function loadOwnedSubscription(
   sourceId: string,
   workspaceId: string,
 ): Promise<{ id: string }> {
-  // Workspace + source uniquely identifies a subscription in MVP single-
-  // profile UX. If Phase 5+ enables multi-profile, the API will need to
-  // accept subscription_id explicitly.
+  // MVP UX assumes a single default subscription per (workspace, source).
+  // The explicit `topic_profile_id IS NULL` filter pins us to the default
+  // row; without it, Phase 5+ multi-profile would silently return one of
+  // many matching subscriptions (`.limit(1)` orders by physical position).
+  // Multi-profile API will need to accept subscription_id directly.
   const rows = await tx
     .select({ id: workspaceSourceSubscriptions.id })
     .from(workspaceSourceSubscriptions)
@@ -421,6 +526,7 @@ async function loadOwnedSubscription(
       and(
         eq(workspaceSourceSubscriptions.workspaceId, workspaceId),
         eq(workspaceSourceSubscriptions.sourceId, sourceId),
+        sql`${workspaceSourceSubscriptions.topicProfileId} IS NULL`,
       ),
     )
     .limit(1);

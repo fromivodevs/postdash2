@@ -9,8 +9,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { useState, type ReactNode } from 'react';
-import { Button, Placeholder, Section, useSnackbar } from '../components/index.ts';
+import { Button, FieldError, Placeholder, Section, useSnackbar } from '../components/index.ts';
 import { useBackButton } from '../telegram/useBackButton.ts';
+import { useMainButton } from '../telegram/useMainButton.ts';
 import { useSession } from '../session/SessionProvider.tsx';
 import { ROUTES } from '../routing/routes.ts';
 import { postSource, type PostSourceInput } from '../api/sources.ts';
@@ -31,6 +32,8 @@ export function AddSourceScreen(): ReactNode {
   const [url, setUrl] = useState('');
   const [type, setType] = useState<SourceType>('rss');
   const [name, setName] = useState('');
+  // §7 FieldError: validation lives next to the bad input, not in a toast.
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const createMutation = useMutation<SourceSubscriptionProjection, Error, PostSourceInput>({
     mutationFn: async (input) => {
@@ -50,9 +53,10 @@ export function AddSourceScreen(): ReactNode {
   const onSubmit = (): void => {
     const trimmedUrl = url.trim();
     if (!trimmedUrl) {
-      showSnackbar({ text: 'Укажи URL.', tone: 'danger' });
+      setUrlError('Укажи URL.');
       return;
     }
+    setUrlError(null);
     const trimmedName = name.trim();
     createMutation.mutate({
       url: trimmedUrl,
@@ -60,6 +64,16 @@ export function AddSourceScreen(): ReactNode {
       ...(trimmedName ? { name: trimmedName } : {}),
     });
   };
+
+  // §4 native chrome: sticky-bottom MainButton is the primary CTA. The
+  // in-page "Добавить" Button below stays for non-Telegram dev.
+  useMainButton({
+    visible: true,
+    text: 'Добавить',
+    onClick: onSubmit,
+    loading: createMutation.isPending,
+    enabled: !createMutation.isPending && url.trim().length > 0,
+  });
 
   return (
     <Section header="Новый источник">
@@ -72,15 +86,22 @@ export function AddSourceScreen(): ReactNode {
           <span className="add-source-form__label">URL</span>
           <input
             className="add-source-form__input"
-            type="text"
+            type="url"
+            inputMode="url"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              if (urlError) setUrlError(null);
+            }}
             placeholder="https://example.com/feed.xml"
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
             aria-label="URL источника"
+            aria-invalid={urlError ? true : undefined}
+            aria-describedby={urlError ? 'source-url-error' : undefined}
           />
+          <FieldError id="source-url-error" message={urlError} />
         </label>
 
         <label className="add-source-form__field">
