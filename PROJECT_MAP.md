@@ -50,7 +50,10 @@
   - `src/routes/topics.ts` — Phase 3 `POST/GET/PATCH/DELETE /topics`
   - `src/routes/sources.ts` — Phase 3 `POST/GET/PATCH/DELETE /sources`
   - `src/routes/topics-projection.ts` — Phase 3 domain → wire projections
-  - Total API tests: 95
+  - `src/routes/radar.ts` — Phase 5 `GET /radar` with status/score filters + pagination
+  - `src/routes/radar-projection.ts` — Phase 5 domain → wire projection
+  - `src/__tests__/routes-radar.test.ts` — 5 radar route tests
+  - Total API tests: 100
 - `apps/miniapp/` — Vite + React 18 + Telegram SDK Mini App
   - `vite.config.ts`, `index.html`
   - `src/main.tsx` — provider tree (Query / AppRoot / Router / Snackbar / Session)
@@ -72,26 +75,35 @@
   - `scripts/check-bundle-size.mjs` — gzip bundle budget gate (§5/§13), `.bundle-size-baseline.json`
   - `src/api/topics.ts` — Phase 3 topics API client
   - `src/api/sources.ts` — Phase 3 sources API client
+  - `src/api/radar.ts` — Phase 5 radar API client (`getRadar`)
   - `src/screens/SettingsScreen.tsx` — Phase 3 topic profile edit form (upsert)
   - `src/screens/SourcesScreen.tsx` — Phase 3 sources list (toggle/delete)
   - `src/screens/AddSourceScreen.tsx` — Phase 3 URL+type add form
+  - `src/screens/RadarScreen.tsx` — Phase 5 radar with filter chips + score cards
+  - `src/screens/radarView.ts` — Phase 5 pure view-model helpers
   - `src/screens/__tests__/splitTags.test.ts` — 4 tests for tag parsing helper
-  - Total miniapp tests: 109 (incl. ChannelScreen 24, channels api 15, splitTags 4)
+  - `src/screens/__tests__/radarView.test.ts` — 17 view-model tests
+  - Total miniapp tests: 162
 - `apps/worker/` — task polling, IAM refresh, AI calls (Phase 4+)
   - `src/index.ts` — entry, pino logger, wires IAM store + AIProvider into WorkerLoop
   - `src/loop.ts` — `WorkerLoop`: N polling slots + scheduler
-  - `src/env.ts` — zod env validation (friendly ZodError wrapper)
-  - `src/dispatcher.ts` — Dispatcher + task-type → handler routing + failure classification
-  - `src/scheduler.ts` — in-process cron: fastTick (1/min: enqueue fetch_source) + slowTick (5/min: janitor + iam refresh)
+  - `src/env.ts` — zod env validation (Phase 5 adds `MATCHING_MIN_COSINE` + `AUTO_DRAFT_SCORE_THRESHOLD`)
+  - `src/dispatcher.ts` — Dispatcher + task-type → handler routing + failure classification (Phase 5 aiConfig extended)
+  - `src/scheduler.ts` — in-process cron: fastTick (1/min: enqueue fetch_source) + slowTick (5/min: janitor + iam refresh + Phase 5 recompute_topic_embedding enqueue)
   - `src/system-state-store.ts` — `IAMTokenStore` adapter backed by `system_state` table (keeps `packages/ai` free of DB deps)
   - `src/handlers/fetch-source.ts` — RSS fetch + upsert global_news_items + enqueue downstream
   - `src/handlers/extract-news-item.ts` — Phase 4 MVP: summary → extracted_text + enqueue embed
   - `src/handlers/embed-news-item.ts` — call ai.embed, persist vector, enqueue cluster
-  - `src/handlers/cluster-news.ts` — pgvector nearest-neighbour + centroid recompute
+  - `src/handlers/cluster-news.ts` — pgvector nearest-neighbour + centroid recompute (Phase 5: enqueues match_news_to_workspaces after attach)
   - `src/handlers/janitor-release-stuck-tasks.ts` — call releaseStuckTasks
   - `src/handlers/refresh-iam-token.ts` — invoke `_iamRefresh` on tagged provider
+  - `src/handlers/match-news-to-workspaces.ts` — Phase 5: fan-out per workspace_source_subscriptions; negative-keyword pre-filter + language gate + cosine pre-score
+  - `src/handlers/score-workspace-match.ts` — Phase 5: LLM scoring + composite + TemplateProvider fallback + ai_usage_events write
+  - `src/handlers/recompute-topic-embedding.ts` — Phase 5: re-embed topic_profile (kind='query')
   - `src/handlers/index.ts` — re-exports
-  - `src/__tests__/dispatcher.test.ts` — 4 routing/retry-classification tests
+  - `src/__tests__/dispatcher.test.ts` — 7 routing/retry-classification tests
+  - `src/__tests__/score-composite.test.ts` — 4 composite weight tests
+  - `src/__tests__/match-helpers.test.ts` — 15 helper tests (negative_keyword, cosineSim, parseEmbedding, buildTopicText)
 
 ### Packages
 - `packages/ai/` — AIProvider interface + Yandex DeepSeek + Template fallback
@@ -118,13 +130,15 @@
   - `migrations/0002_phase2.sql` / `0002_phase2.down.sql` — Phase 2: `content_channels`, `channel_connections`, `channel_connect_codes`
   - `migrations/0003_phase3.sql` / `0003_phase3.down.sql` — Phase 3: `topic_profiles` (with embedding nullable), `sources` (canonical_url UNIQUE), `workspace_source_subscriptions`
   - `migrations/0005_phase4.sql` / `0005_phase4.down.sql` — Phase 4: `system_state`, `tasks` (+3 partial unique anti-dupe indices), `task_runs`, `global_news_items` (+ivfflat embedding index), `news_clusters`, `news_cluster_items` (UNIQUE news_item_id → one cluster per item)
+  - `migrations/0008_phase5_matching_scoring.sql` / `.down.sql` — Phase 5: `workspace_news_matches` (cluster-level + item-level partial UNIQUEs), `ai_usage_events`, extends `tasks.type` CHECK with 3 new types + 3 partial UNIQUE anti-dupe indices
 - `packages/shared/` — общий код между backend и Mini App
   - `src/telegram-format.ts` — `TELEGRAM_POST_MAX_LENGTH = 4096` constant + `fitsTelegramPostLimit(text)` helper; Phase 6: full parser
   - `src/channel-projection.ts` — Phase 2: wire types (`ChannelProjection`, `ConnectCodeProjection`) + `buildConnectDeepLink`
-  - `src/index.ts` — re-exports `TELEGRAM_POST_MAX_LENGTH`, `fitsTelegramPostLimit`, channel-projection
+  - `src/index.ts` — re-exports `TELEGRAM_POST_MAX_LENGTH`, `fitsTelegramPostLimit`, channel-projection, radar-projection
   - `src/__tests__/telegram-format.test.ts` — 4 tests for `fitsTelegramPostLimit`
   - `src/__tests__/` — 33 tests total (incl. channel-projection 11)
   - `src/topic-source-projection.ts` — Phase 3 wire schemas: `TopicProfileProjection`, `SourceProjection`, `SourceSubscriptionProjection` + list shapes
+  - `src/radar-projection.ts` — Phase 5 wire schemas: `RadarMatchProjection`, `RadarListProjection`, `RADAR_MATCH_STATUSES`
 - `packages/channel-adapters/` — Telegram (Phase 2+) / VK / Discord (future)
   - `README.md` — architectural rule: channel-agnostic core; adapter scope documented
   - `src/telegram/types.ts` — Telegram adapter types
@@ -148,9 +162,11 @@
   - `src/topic-profiles.ts` — Phase 3 create/update/delete/list with upsert semantics
   - `src/sources.ts` — Phase 3 create/update/delete/list with redirect+canonicalize+global-source dedup
   - `src/topic-row-mappers.ts` — Phase 3 row → domain mappers
+  - `src/workspace-news-matches.ts` — Phase 5: `upsertWorkspaceNewsMatch` (cluster + item dedup), `suppressWorkspaceNewsMatch`, `listRadarMatches`
   - `src/__tests__/topic-profiles.test.ts` — 9 tests
   - `src/__tests__/sources.test.ts` — 10 tests
-  - `src/__tests__/` — 55 tests total
+  - `src/__tests__/workspace-news-matches.test.ts` — 12 schema tests
+  - `src/__tests__/` — 70 tests total
 - `packages/tasks/` — Phase 4 task queue primitives (no business logic)
   - `src/types.ts` — `TASK_TYPES` + `TASK_STATUSES` exhaustive lists (mirror migration CHECK), `EnqueueTaskInputSchema` (zod), `DEFAULT_RETRY_POLICY` (10s/30s/90s backoff matching §15 of WORKERS-AND-INGESTION)
   - `src/queue.ts` — `enqueueTask` (ON CONFLICT DO NOTHING via partial uniques), `pollNextTask` (atomic `FOR UPDATE SKIP LOCKED`), `completeTask`, `failTask` (transient→retry-with-backoff / permanent→failed_permanent), `deferTask` (Phase 6 hook), `releaseStuckTasks` (janitor SQL with attempts-exhausted promotion)
@@ -188,8 +204,11 @@
 - `architecture/channel-connection.md` — Phase 2 channel-connection system. *Active.* 3 DB tables, 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (33 tests), 4-state Mini App screen. Closed tag: `phase-2-perfect`.
 - `architecture/topics-and-sources.md` — Phase 3 topics + sources. *Active.* 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), 4 topic commands + 4 source commands, `canonicalize` + `resolveRedirect` in `@postdash/sources`, 8 REST endpoints, 3 Mini App screens (Settings/Sources/AddSource). Latest closure `phase-3-perfect-r8`.
 - `architecture/global-ingestion.md` — Phase 4 task system + global ingestion + embeddings. *Active. Latest closure `phase-4-perfect-r4`.* 6 new DB tables (`tasks`, `task_runs`, `system_state`, `global_news_items`, `news_clusters`, `news_cluster_items`), new `packages/tasks` queue, `fetchRssSource` + `contentHash` in `@postdash/sources`, real Yandex IAM (PS256 JWT) + `embed()`, 6 task handlers + in-process scheduler in `apps/worker`. Closes edges 4.1/4.2/4.3/4.4/4.5/4.10/5.5/6.5/9.1/9.2/9.3/9.4/9.5/9.8/10.5/11.x.
+- `architecture/matching-and-scoring.md` — Phase 5 per-workspace radar. *Active.* 2 new DB tables (`workspace_news_matches`, `ai_usage_events`), 3 new task types (`match_news_to_workspaces`, `score_workspace_match`, `recompute_topic_embedding`), real `AIProvider.score()` on Yandex DeepSeek 3.2 (completion + zod + repair-attempt + TemplateProvider fallback), composite score (LLM 50% + cosine 30% + freshness 10% + reliability 10%), `GET /radar` route, Mini App Radar screen with status filter chips. Cost guard is a STUB (Phase 6 hook).
 
 ## Recent changes (last 10)
+
+- 2026-05-17: Phase 5 (Matching + Scoring) implemented on `phase/5-matching-scoring`. New migration `0008_phase5_matching_scoring.sql` adds 2 tables (`workspace_news_matches` with cluster-level partial UNIQUE + item-level partial UNIQUE, `ai_usage_events` for cost/token accounting) and extends `tasks.type` CHECK with 3 new types plus 3 anti-dupe partial UNIQUEs. Real `AIProvider.score()` on Yandex provider (DeepSeek 3.2 completion + zod-validated JSON output + one repair-attempt + refused-content surface). 3 new worker handlers (`match_news_to_workspaces` with negative-keyword pre-filter + language gate + cosine pre-score, `score_workspace_match` with composite score + TemplateProvider fallback, `recompute_topic_embedding` driven by scheduler.slowTick scanning `embedding_status='pending'`). `cluster_news` handler now enqueues `match_news_to_workspaces` after attach. New `GET /radar` route + projection in `apps/api`, real Mini App `RadarScreen` (filter chips + score-emphasized cards + empty/loading/error states), shared `RadarMatchProjection` wire schema in `@postdash/shared`. Composite score per `tg_mvp_plan/07-AI-SCORING-AND-DRAFTS.md` §3: LLM 50% + cosine 30% + freshness 10% + reliability 10%. Cost guard remains a STUB (Phase 6 hook). Workspace tests: 558 passed (+63 vs Phase 4), 21 skipped. Mini App bundle 167991 B (+7.45% vs baseline, under 10%). Architecture: `architecture/matching-and-scoring.md`.
 
 - 2026-05-17: Phase 4 fresh step-perfect-loop r4 validation closed on `phase/4-global-ingestion-embeddings` with tag `phase-4-perfect-r4`. No runtime code changes were required after r3. Gates passed: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `SKIP_DB_TESTS=1 pnpm test` (495 passed, 21 skipped), `pnpm build`, Mini App bundle budget (166320 B, +6.38% vs baseline, under 10%), `.codex/kit/diagnose.ps1`, `.claude/kit/diagnose.ps1`, and `git diff --check`. Final status remains 8/10 GOOD with UNREACHABLE_10 reason (a): the remaining caps are Phase 8/live-ops scope (live Neon/Yandex/e2e worker evidence, health/drain/reapers/retention/encryption/IP pinning/REINDEX policy), already documented in `architecture/global-ingestion.md`.
 
