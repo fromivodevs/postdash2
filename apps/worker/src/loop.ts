@@ -12,10 +12,10 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
-import type { AIProvider } from '@postdash/ai';
+import { type AIProvider, YandexAIStudioDeepSeekProvider, parseAIEnv } from '@postdash/ai';
 import type { Pool } from '@postdash/db';
 import { pollNextTask } from '@postdash/tasks';
-import { Dispatcher } from './dispatcher.js';
+import { Dispatcher, type TaskHandlerCtx } from './dispatcher.js';
 import { Scheduler } from './scheduler.js';
 import {
   clusterNewsHandler,
@@ -44,9 +44,37 @@ export class WorkerLoop {
   private dispatcher: Dispatcher;
   private scheduler: Scheduler;
   private readonly workerId: string;
+  /**
+   * Force-refresh hook for the IAM token cache the active provider consults.
+   * Resolved once at construction time when the provider is Yandex; left
+   * undefined for TemplateProvider (refresh_iam_token handler treats undefined
+   * as a no-op). Pinning the hook here — instead of letting each task look it
+   * up — ensures we operate on THE single IAMTokenCache instance, not a
+   * sibling whose state diverges via system_state writethrough.
+   */
+  private readonly iamRefresh: (() => Promise<void>) | undefined;
+  /**
+   * AI tunables resolved once at construction time. Handlers consume these
+   * via `ctx.aiConfig` rather than calling `parseAIEnv()` themselves, so a
+   * handler module doesn't execute env-parsing as a side effect at import.
+   */
+  private readonly aiConfig: TaskHandlerCtx['aiConfig'];
 
   constructor(private readonly opts: WorkerLoopOptions) {
     this.workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+    if (opts.ai instanceof YandexAIStudioDeepSeekProvider) {
+      const cache = opts.ai.iamToken;
+      this.iamRefresh = async () => {
+        await cache.forceRefresh();
+      };
+    } else {
+      this.iamRefresh = undefined;
+    }
+    const ai = parseAIEnv();
+    this.aiConfig = {
+      dedupeCosineThreshold: ai.AI_DEDUPE_COSINE_THRESHOLD,
+      dedupeWindowHours: ai.AI_DEDUPE_WINDOW_HOURS,
+    };
     this.dispatcher = new Dispatcher()
       .register('fetch_source', fetchSourceHandler)
       .register('extract_news_item', extractNewsItemHandler)
@@ -109,7 +137,10 @@ export class WorkerLoop {
     try {
       const task = await pollNextTask(this.opts.pool.client, slotId, this.opts.leaseMinutes);
       if (!task) return false;
-      await this.dispatcher.dispatch(task, this.opts.pool, this.opts.ai, this.opts.logger);
+      await this.dispatcher.dispatch(task, this.opts.pool, this.opts.ai, this.opts.logger, {
+        aiConfig: this.aiConfig,
+        ...(this.iamRefresh ? { iamRefresh: this.iamRefresh } : {}),
+      });
       return true;
     } catch (err) {
       this.opts.logger.error({ err, slotId }, 'unhandled error in worker loop');

@@ -7,11 +7,12 @@
  * HTML extraction отложена".
  *
  * Idempotent on re-run: if extracted_text is already populated and the
- * status is not 'new', we still enqueue embed (which is itself idempotent
- * via the partial unique index? — no, embed has no anti-dupe index since
- * news_item_id payload). The dispatcher guarantees that a single task only
- * fires one extract; duplicate extracts would only happen via manual
- * re-enqueue, which is acceptable.
+ * status is not 'new', we still enqueue embed. Embed has its own anti-dupe
+ * partial UNIQUE index on `(payload->>'news_item_id')` for tasks in
+ * pending/running states (added in `0006_phase4_hardening.sql`), so a
+ * duplicate enqueue collapses to ON CONFLICT DO NOTHING in
+ * `enqueueTask`. The dispatcher already guarantees that a single task only
+ * fires one extract; the partial index makes a manual re-enqueue safe too.
  */
 
 import { z } from 'zod';

@@ -83,7 +83,24 @@ export class Scheduler {
   }
 
   /**
-   * Enqueue fetch_source for every active source whose interval elapsed.
+   * Enqueue fetch_source for every due source. "Due" means:
+   *   - status='active' AND its configured fetch_interval_minutes has elapsed, OR
+   *   - status='error' AND at least 60 minutes have elapsed since the last
+   *     attempt (regardless of fetch_interval_minutes).
+   *
+   * The 'error' branch is what makes the handler-driven recovery path
+   * (fetch-source flips error→active on a successful fetch) actually
+   * reachable. Without it, an error source is never enqueued, the handler
+   * never runs, and the source stays in 'error' forever until an operator
+   * manually unflips it. The 60-minute floor keeps the retry budget under
+   * control: a permanently broken feed costs at most one fetch per hour
+   * instead of one fetch per fetch_interval (which could be 5 minutes).
+   *
+   * The 60-minute interval is hardcoded for the MVP; promotable to an env
+   * var (e.g. `SOURCES_ERROR_RETRY_INTERVAL_MINUTES`) later if operators
+   * need different cadences per environment — tracked in
+   * architecture/global-ingestion.md "Known follow-ups".
+   *
    * Exposed for tests (no setTimeout dependency).
    */
   async fastTick(): Promise<{ enqueued: number }> {
@@ -91,11 +108,17 @@ export class Scheduler {
     try {
       const due = (await this.opts.db.execute(sql`
         SELECT id FROM sources
-        WHERE status = 'active'
-          AND type = 'rss'
+        WHERE type = 'rss'
           AND (
-            last_fetched_at IS NULL
-            OR last_fetched_at + (fetch_interval_minutes * interval '1 minute') < now()
+            (status = 'active' AND (
+              last_fetched_at IS NULL
+              OR last_fetched_at + (fetch_interval_minutes * interval '1 minute') < now()
+            ))
+            OR
+            (status = 'error' AND (
+              last_fetched_at IS NULL
+              OR last_fetched_at + interval '60 minutes' < now()
+            ))
           )
       `)) as Array<{ id: string }>;
       for (const row of due) {

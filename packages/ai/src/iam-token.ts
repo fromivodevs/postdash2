@@ -16,9 +16,9 @@
  * promise. Prevents the cold-start thundering-herd problem (10 workers boot
  * at once, all see no cached token, all 10 hit IAM = needless cost).
  *
- * Crypto: we use node:crypto's `createPrivateKey` + `createSign('RSA-PSS')`
- * directly — no `jsonwebtoken` dep. The JWT is small and the structure is
- * stable.
+ * Crypto: we use node:crypto's `createPrivateKey` + `createSign('RSA-SHA256')`
+ * with RSA-PSS padding (PS256 per JWA) directly — no `jsonwebtoken` dep. The
+ * JWT is small and the structure is stable.
  *
  * See tg_mvp_plan/11-AI-PROVIDER.md §5 and architecture/global-ingestion.md.
  */

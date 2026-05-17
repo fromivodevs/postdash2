@@ -40,10 +40,20 @@ export interface YandexProviderConfig {
 
 export class YandexAIStudioDeepSeekProvider implements AIProvider {
   public readonly name = 'yandex-deepseek';
+  /**
+   * The single IAMTokenCache instance this provider consults. Exposed so the
+   * worker's `refresh_iam_token` task handler can invoke `forceRefresh()` on
+   * the SAME in-memory cache the provider reads from — without this seam the
+   * handler would have to build a sibling cache and rely on the system_state
+   * writethrough to converge, which doubles the IAM-exchange budget on every
+   * proactive refresh tick.
+   */
+  public readonly iamToken: IAMTokenCache;
   private readonly fetchImpl: typeof globalThis.fetch;
 
   constructor(private readonly config: YandexProviderConfig) {
     this.fetchImpl = config.fetch ?? globalThis.fetch;
+    this.iamToken = config.iamToken;
   }
 
   async score(_input: ScoreInput): Promise<ScoreOutput> {
@@ -108,10 +118,12 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
     try {
       response = await send(token);
     } catch (err) {
-      const isAbort = err instanceof Error && err.name === 'AbortError';
+      // Abort and other network failures both map to `server_error` — the task
+      // queue's transient-retry policy is the right response for either. Kept
+      // as a single branch to make that policy intent obvious.
       throw new AIProviderError(
         `embed network error: ${(err as Error).message ?? String(err)}`,
-        isAbort ? 'server_error' : 'server_error',
+        'server_error',
         err,
       );
     }
@@ -127,6 +139,13 @@ export class YandexAIStudioDeepSeekProvider implements AIProvider {
           'server_error',
           err,
         );
+      }
+      // If the retry still comes back 401 the credentials themselves are bad
+      // (revoked SA key, wrong folder, etc.) — surface as auth_error so the
+      // dispatcher's classifyFailure maps it to permanent. Without this
+      // branch the generic 4xx path below would mislabel it as parse_error.
+      if (response.status === 401) {
+        throw new AIProviderError('embed still 401 after token refresh', 'auth_error');
       }
     }
 

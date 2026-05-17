@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AIProviderError } from '@postdash/ai';
 import { Dispatcher } from '../dispatcher.js';
 
 /**
@@ -11,9 +12,12 @@ function makeStubPool() {
   const queries: string[] = [];
   // The completeTask / failTask helpers call client`SQL...` (tagged-template).
   // We mimic with a function that records the strings and returns a thenable.
+  // Both the lookup-then-update flow (`SELECT attempts, max_attempts ...`) and
+  // the lease-guarded UPDATEs (`... RETURNING id`) must return ≥1 row so the
+  // helpers proceed; one row is enough for either shape.
   const client = vi.fn().mockImplementation((strings: TemplateStringsArray | string) => {
     queries.push(typeof strings === 'string' ? strings : strings.join('?'));
-    return Promise.resolve([{ attempts: 1, max_attempts: 3 }]);
+    return Promise.resolve([{ attempts: 1, max_attempts: 3, id: 't-stub' }]);
   }) as unknown as { (...args: unknown[]): Promise<unknown> };
   return {
     pool: { client, db: {} as unknown },
@@ -28,6 +32,8 @@ const noopLogger = {
   error: vi.fn(),
   debug: vi.fn(),
 } as unknown as import('pino').Logger;
+
+const stubAiConfig = { dedupeCosineThreshold: 0.15, dedupeWindowHours: 48 };
 
 describe('Dispatcher', () => {
   it('routes a task to the registered handler', async () => {
@@ -44,8 +50,9 @@ describe('Dispatcher', () => {
       maxAttempts: 3,
       workspaceId: null,
       sourceId: 's1',
+      lockedBy: 'worker-stub',
     };
-    await d.dispatch(task, pool, ai, noopLogger);
+    await d.dispatch(task, pool, ai, noopLogger, { aiConfig: stubAiConfig });
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
@@ -61,8 +68,9 @@ describe('Dispatcher', () => {
       maxAttempts: 3,
       workspaceId: null,
       sourceId: 's1',
+      lockedBy: 'worker-stub',
     };
-    await d.dispatch(task, pool, ai, noopLogger);
+    await d.dispatch(task, pool, ai, noopLogger, { aiConfig: stubAiConfig });
     // failTask should run an UPDATE tasks SET status='failed_permanent' ...
     expect(queries.some((q) => q.toLowerCase().includes('failed_permanent'))).toBe(true);
   });
@@ -85,10 +93,12 @@ describe('Dispatcher', () => {
         maxAttempts: 3,
         workspaceId: null,
         sourceId: 's1',
+        lockedBy: 'worker-stub',
       },
       pool,
       ai,
       noopLogger,
+      { aiConfig: stubAiConfig },
     );
     expect(queries.some((q) => q.toLowerCase().includes('failed_permanent'))).toBe(true);
   });
@@ -109,13 +119,94 @@ describe('Dispatcher', () => {
         maxAttempts: 3,
         workspaceId: null,
         sourceId: 's1',
+        lockedBy: 'worker-stub',
       },
       pool,
       ai,
       noopLogger,
+      { aiConfig: stubAiConfig },
     );
     // attempts=1 < max_attempts=3 → status='pending' (retry), not failed_permanent.
     expect(queries.some((q) => q.includes("status = 'pending'"))).toBe(true);
     expect(queries.some((q) => q.includes("status = 'failed_permanent'"))).toBe(false);
+  });
+
+  it('AIProviderError code=auth_error classifies as permanent', async () => {
+    const d = new Dispatcher();
+    d.register('fetch_source', async () => {
+      throw new AIProviderError('bad creds', 'auth_error');
+    });
+    const { pool, queries } = makeStubPool();
+    const ai = { name: 'template' } as unknown as import('@postdash/ai').AIProvider;
+    await d.dispatch(
+      {
+        id: 't5',
+        type: 'fetch_source',
+        payload: {},
+        attempts: 1,
+        maxAttempts: 3,
+        workspaceId: null,
+        sourceId: 's1',
+        lockedBy: 'worker-stub',
+      },
+      pool,
+      ai,
+      noopLogger,
+      { aiConfig: stubAiConfig },
+    );
+    expect(queries.some((q) => q.includes("status = 'failed_permanent'"))).toBe(true);
+  });
+
+  it('AIProviderError code=rate_limit classifies as transient (retries to pending)', async () => {
+    const d = new Dispatcher();
+    d.register('fetch_source', async () => {
+      throw new AIProviderError('slow down', 'rate_limit');
+    });
+    const { pool, queries } = makeStubPool();
+    const ai = { name: 'template' } as unknown as import('@postdash/ai').AIProvider;
+    await d.dispatch(
+      {
+        id: 't6',
+        type: 'fetch_source',
+        payload: {},
+        attempts: 1,
+        maxAttempts: 3,
+        workspaceId: null,
+        sourceId: 's1',
+        lockedBy: 'worker-stub',
+      },
+      pool,
+      ai,
+      noopLogger,
+      { aiConfig: stubAiConfig },
+    );
+    expect(queries.some((q) => q.includes("status = 'pending'"))).toBe(true);
+    expect(queries.some((q) => q.includes("status = 'failed_permanent'"))).toBe(false);
+  });
+
+  it('AIProviderError code=parse_error classifies as permanent', async () => {
+    const d = new Dispatcher();
+    d.register('fetch_source', async () => {
+      throw new AIProviderError('bad json', 'parse_error');
+    });
+    const { pool, queries } = makeStubPool();
+    const ai = { name: 'template' } as unknown as import('@postdash/ai').AIProvider;
+    await d.dispatch(
+      {
+        id: 't7',
+        type: 'fetch_source',
+        payload: {},
+        attempts: 1,
+        maxAttempts: 3,
+        workspaceId: null,
+        sourceId: 's1',
+        lockedBy: 'worker-stub',
+      },
+      pool,
+      ai,
+      noopLogger,
+      { aiConfig: stubAiConfig },
+    );
+    expect(queries.some((q) => q.includes("status = 'failed_permanent'"))).toBe(true);
   });
 });

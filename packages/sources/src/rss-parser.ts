@@ -20,12 +20,17 @@
  *   - 4.8 paywalled (no extracted_text in RSS) → summary fallback, item still yielded
  *
  * SSRF defence: this fetcher does NOT replicate the full SSRF dance from
- * `redirect-resolver.ts`. RSS sources are user-supplied at creation time
- * and pass through the redirect resolver's allowlist before being saved
- * to `sources.url`. Subsequent fetches use the stored URL; an attacker
- * who can mutate that row already controls the workspace's database. (A
- * follow-up Phase 4+ hardening can layer the same SSRF gate here using
- * `ResolvedHostSnapshot` from redirect-resolver.)
+ * `redirect-resolver.ts` inline. RSS sources are user-supplied at creation
+ * time and pass through the redirect resolver's allowlist before being saved
+ * to `sources.url`. Subsequent fetches use the stored URL; an attacker who
+ * can mutate that row already controls the workspace's database.
+ *
+ * The `fetch_source` handler (apps/worker/src/handlers/fetch-source.ts) re-
+ * runs `resolveRedirect()` before every call here, so a DNS flip that points
+ * the canonical URL at a private IP between source creation and fetch time
+ * is caught and the source is parked in status='error'. Full connect-time IP
+ * pinning (via a custom `https.Agent({ lookup })`) is a Phase 4+ follow-up
+ * tracked in architecture/global-ingestion.md.
  */
 
 // `rss-parser` ships CJS default-export. With NodeNext + esModuleInterop,

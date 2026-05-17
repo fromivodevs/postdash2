@@ -422,9 +422,78 @@ packages/ai (Phase 4 additions)
 **Why:** RSS обычно содержит достаточно контента в summary/description. HTML scraping добавляет крупную зависимость + edge cases (paywall, JS-rendered, anti-bot). Лучше выпустить рабочий ingestion и добавить scraping по требованию реальных источников.
 **Tradeoff:** для source'ов с минимальными RSS summary embeddings будут менее качественные. UI surface'нет это как low-content badge в Phase 5+.
 
+## Known follow-ups (Phase 4+ ops)
+
+Deliberately deferred to keep the Phase 4 scope tractable. Each item is wired
+up only enough that the absence is not a silent footgun:
+
+- **Stranded `global_news_items` reaper.** If a worker crashes between
+  embed-success and cluster_news enqueue (or cluster_news permanently fails),
+  the row sits at `status='embedded'` with no follow-up. A periodic reaper task
+  should scan for `embedded` rows older than N hours and re-enqueue
+  `cluster_news`, plus an `embedding_status='failed'` backfill that nudges old
+  failures into a retry without operator action. Out of scope here because it
+  needs (a) a new task type + CHECK migration, (b) scheduler tick wiring, (c)
+  rate-limiting so a thundering herd doesn't wake up after extended downtime.
+- **`task_runs` retention.** The audit table grows unbounded; a daily
+  `DELETE FROM task_runs WHERE finished_at < now() - interval '30 days'` (or
+  hot/cold table partitioning) belongs in the same scheduler track as the
+  janitor.
+- **ivfflat REINDEX policy.** `lists = 100` is sized for ≤100k vectors;
+  past that, recall degrades unless we REINDEX with `lists = sqrt(n)`. The
+  cluster_news handler now `SET LOCAL ivfflat.probes = 10` per transaction
+  (default 1 — ~75% recall; 10 ≈ 95% on a 100-list index), which is a
+  recall floor, not a substitute for periodic REINDEX.
+- **Worker `/health` endpoint + SIGTERM drain.** Render expects `/health`
+  responses; today the worker exits on SIGTERM without finishing leased
+  tasks (they fall to the janitor 5 minutes later). A graceful drain that
+  blocks new polls and awaits in-flight dispatches would smooth deploys.
+- **`system_state` token encryption-at-rest.** The IAM token currently lives
+  as plaintext in `system_state.value` (Phase 4 trade-off). When Vault /
+  cloud-KMS integration arrives, the writethrough callback should encrypt
+  before persisting.
+- **Integration test harness for the 8 plan-promised scenarios.** Unit tests
+  cover individual handlers in isolation; an end-to-end harness that drives
+  the full pipeline (scheduler tick → fetch → extract → embed → cluster)
+  against a transient Postgres + a mock Yandex would catch wiring drift the
+  unit tests can't.
+- **Per-news-item task partial UNIQUE indexes** for `extract_news_item` and
+  `embed_news_item` shipped in `0006_phase4_hardening.sql` (anti-duplicate
+  on `(payload->>'news_item_id')`). The schema.ts mirror is a comment-only
+  stub because Drizzle's `.on()` builder doesn't accept SQL expressions.
+- **`sources.status='error'` retry cadence is hardcoded to 60 minutes**
+  in `scheduler.fastTick`. The scheduler treats `error` sources as due once
+  per hour regardless of `fetch_interval_minutes` so the handler-driven
+  recovery path (a successful fetch flips `error` → `active`) is actually
+  reachable, but the budget is bounded. Promote to an env var (e.g.
+  `SOURCES_ERROR_RETRY_INTERVAL_MINUTES`) once operator feedback says one
+  hour is too aggressive / too lax.
+- **Connect-time IP pinning for fetch.** `fetch-source.ts` re-runs
+  `resolveRedirect` for SSRF defence and hands `guard.finalUrl` to
+  `fetchRssSource` (so the actual fetch does not re-walk a separate redirect
+  chain), but `fetch()`'s own TCP connect still does its own DNS lookup —
+  a residual TOCTOU window where an attacker who flips DNS between the
+  guard and the connect could still land a single request on a private IP.
+  Closing this needs a custom `https.Agent({ lookup })` (or undici
+  `connect.lookup`) that pins the IPs returned by the guard. Out of scope
+  for Phase 4 because the resolver is detective and the blast radius of a
+  single GET to a private IP is bounded (no response body is surfaced to
+  matchers — the fetch fails at parse if it's not RSS).
+- **cluster_news orphan-cluster window.** The handler runs the full
+  lookup + create + attach + recompute path inside one `client.begin(...)`
+  transaction, but two concurrent workers processing different items in
+  the same neighbour timeframe can still both decide "no cluster exists"
+  and both INSERT a new `news_clusters` row. `news_cluster_items.UNIQUE
+  (news_item_id)` prevents the second writer from attaching the same item
+  twice, so cluster membership never tears — we just leak a row in
+  `news_clusters`. The fully-atomic fix is `SELECT ... FOR UPDATE` on the
+  nearest neighbour's cluster row to serialize concurrent writers; the
+  stranded-cluster reaper (already listed above) covers cleanup until then.
+
 ## Files
 
 - `packages/db/migrations/0005_phase4.sql` + `.down.sql` — 6 таблиц + индексы + pgvector ivfflat.
+- `packages/db/migrations/0006_phase4_hardening.sql` + `.down.sql` — partial UNIQUE indexes on `(payload->>'news_item_id')` for `extract_news_item` and `embed_news_item` (anti-dupe).
 - `packages/db/src/schema.ts` — mirror новых таблиц.
 - `packages/tasks/` — новый package: `src/queue.ts`, `src/types.ts`, `src/__tests__/queue.test.ts`, `package.json`, `tsconfig.json`.
 - `packages/sources/src/rss-parser.ts` — fetch + parse RSS.

@@ -71,7 +71,7 @@ export const embedNewsItemHandler: TaskHandler = async (task, ctx) => {
       embedding: result.vector,
       embeddingStatus: 'ok',
       embeddingUpdatedAt: new Date(),
-      status: sql`CASE WHEN status='new' THEN 'embedded' ELSE status END`,
+      status: sql`CASE WHEN status IN ('new','extracted') THEN 'embedded' ELSE status END`,
       updatedAt: new Date(),
     })
     .where(eq(globalNewsItems.id, payload.news_item_id));

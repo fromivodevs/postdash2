@@ -19,7 +19,13 @@
  */
 
 import { sql, eq } from 'drizzle-orm';
-import { canonicalize, contentHash, fetchRssSource, type ParsedItem } from '@postdash/sources';
+import {
+  canonicalize,
+  contentHash,
+  fetchRssSource,
+  resolveRedirect,
+  type ParsedItem,
+} from '@postdash/sources';
 import { globalNewsItems, sources } from '@postdash/db';
 import type { TaskHandler } from '../dispatcher.js';
 
@@ -54,11 +60,55 @@ export const fetchSourceHandler: TaskHandler = async (task, ctx) => {
     throw permanent(`source ${sourceId} type=${source.type} has no fetcher in Phase 4`);
   }
 
-  const result = await fetchRssSource(source.canonicalUrl, {
+  // SSRF re-check at fetch time. The full SSRF gate (DNS allowlist + rebinding
+  // stability) ran at source creation, but DNS can flip later — a domain that
+  // pointed to a public CDN yesterday may today resolve to a private IP. Re-
+  // running `resolveRedirect` here is cheaper than introducing a connect-time
+  // IP-pinning Agent in the fetcher (Phase 4+ hardening, tracked in
+  // architecture/global-ingestion.md). Block-on-failure marks the source as
+  // permanently failed for this attempt so the operator notices.
+  //
+  // We hand `guard.finalUrl` to the actual fetcher instead of re-feeding
+  // `source.canonicalUrl` so that fetchRssSource doesn't walk a SECOND,
+  // independent redirect chain (which an attacker who flips DNS between
+  // guard and fetch could weaponize). This is detective-only — fetch's own
+  // TCP connect still does its own DNS lookup, so there is a residual
+  // TOCTOU window. Full connect-time IP pinning via a custom https.Agent
+  // is tracked in architecture/global-ingestion.md "Known follow-ups".
+  const guard = await resolveRedirect(source.canonicalUrl, {});
+  if (guard.status === 'blocked_private_ip') {
+    await ctx.db
+      .update(sources)
+      .set({
+        lastFetchedAt: new Date(),
+        // CHECK accepts ('ok' | '4xx' | '5xx' | 'parse_error' | 'timeout');
+        // '4xx' is the closest match for "we refused to fetch this".
+        lastFetchStatus: '4xx',
+        lastFetchError: shortError(guard.error ?? 'blocked_private_ip'),
+        status: 'error',
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.id, sourceId));
+    throw permanent(`ssrf re-check blocked: ${guard.error ?? 'private ip'}`);
+  }
+
+  // On 'resolved' / 'no_redirect' the guard already verified each hop's IP;
+  // hand that terminus to the fetcher. On other non-blocked statuses
+  // (timeout, network_error, too_many_hops, invalid_input) finalUrl is the
+  // last URL we were trying — still safer than rebuilding the chain.
+  const fetchUrl = guard.finalUrl;
+  const result = await fetchRssSource(fetchUrl, {
     maxItems: source.maxItemsPerFetch,
   });
 
   if (result.status !== 'ok') {
+    // Flip sources.status='error' when the failure is permanent (4xx) or this
+    // attempt is about to exhaust the retry budget — the source is consistently
+    // unreachable and operator attention is needed. A subsequent successful
+    // fetch resets it back to 'active' (see the ok branch at the bottom).
+    const finalAttempt = task.attempts >= task.maxAttempts;
+    const isPermanent = result.status === '4xx';
+    const markSourceError = isPermanent || finalAttempt;
     await ctx.db
       .update(sources)
       .set({
@@ -66,12 +116,13 @@ export const fetchSourceHandler: TaskHandler = async (task, ctx) => {
         lastFetchStatus: mapFetchStatus(result.status),
         // CHECK ≤ 200 chars; fetchRssSource already truncates.
         lastFetchError: result.error ?? `fetch ${result.status}`,
+        ...(markSourceError ? { status: 'error' as const } : {}),
         updatedAt: new Date(),
       })
       .where(eq(sources.id, sourceId));
     // 4xx → permanent; 5xx/timeout/network/parse_error → transient (worth
     // retrying once or twice — feed could be temporarily down).
-    if (result.status === '4xx') {
+    if (isPermanent) {
       throw permanent(`feed ${result.status}: ${result.error ?? 'no detail'}`);
     }
     throw transient(`feed ${result.status}: ${result.error ?? 'no detail'}`);
@@ -99,15 +150,30 @@ export const fetchSourceHandler: TaskHandler = async (task, ctx) => {
     }
   }
 
+  const priorStatus = source.status;
   await ctx.db
     .update(sources)
     .set({
       lastFetchedAt: new Date(),
       lastFetchStatus: 'ok',
       lastFetchError: null,
+      // If the source was previously parked in 'error' (permanent / exhausted
+      // failure), a successful fetch un-parks it. We deliberately do NOT touch
+      // 'disabled' here — operator-disabled sources stay disabled even when
+      // we accidentally enqueue a fetch for them (the earlier guard at top of
+      // the handler already short-circuits that case).
+      ...(priorStatus === 'error' ? { status: 'active' as const } : {}),
       updatedAt: new Date(),
     })
     .where(eq(sources.id, sourceId));
+
+  if (priorStatus === 'error') {
+    // Notable transition — operator's log aggregator surfaces warns, so a
+    // recovered source is visible without grep'ing every fetch_source line.
+    // Phase 4's observability story is log-based (no metrics pipeline yet);
+    // warn-level keeps recoveries discoverable against the info-level noise.
+    ctx.logger.warn({ sourceId, status: 'active' }, 'source recovered from error to active');
+  }
 
   ctx.logger.info(
     {
@@ -209,9 +275,15 @@ async function upsertItem(
 }
 
 function mapFetchStatus(s: string): 'ok' | '4xx' | '5xx' | 'parse_error' | 'timeout' {
-  // sources.last_fetch_status CHECK accepts ('ok' | '4xx' | '5xx' | 'parse_error' | 'timeout').
-  // 'network_error' is mapped to 'timeout' since the CHECK doesn't have a
-  // network slot; the precise reason is preserved in last_fetch_error.
+  // sources.last_fetch_status CHECK accepts exactly:
+  //   ('ok' | '4xx' | '5xx' | 'parse_error' | 'timeout').
+  // FetchStatus from rss-parser additionally has 'network_error' (DNS fail,
+  // ECONNREFUSED, etc.) which has no DB slot — we intentionally collapse it
+  // (and any unknown status) into 'timeout'. The precise upstream reason is
+  // preserved verbatim in sources.last_fetch_error, so observability is not
+  // lost; only the categorical bucket is widened. This is by design — adding
+  // a 'network_error' enum value would require a CHECK migration with low
+  // operator value (the error text already disambiguates).
   if (s === 'ok' || s === '4xx' || s === '5xx' || s === 'parse_error' || s === 'timeout') {
     return s;
   }
@@ -227,4 +299,9 @@ function transient(message: string): Error {
   const e: Error & { kind?: string } = new Error(message);
   e.kind = 'transient';
   return e;
+}
+
+/** Hard cap to match sources.last_fetch_error CHECK (≤200 chars). */
+function shortError(msg: string): string {
+  return msg.length > 200 ? msg.slice(0, 200) : msg;
 }

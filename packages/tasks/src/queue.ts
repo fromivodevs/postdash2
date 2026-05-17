@@ -147,7 +147,8 @@ export async function pollNextTask(
       updated_at = now()
     WHERE id IN (SELECT id FROM next)
     RETURNING id, type, payload, attempts, max_attempts AS "maxAttempts",
-              workspace_id AS "workspaceId", source_id AS "sourceId"
+              workspace_id AS "workspaceId", source_id AS "sourceId",
+              locked_by AS "lockedBy"
     `,
     [workerId, leaseMinutes],
   )) as Array<{
@@ -158,6 +159,7 @@ export async function pollNextTask(
     maxAttempts: number;
     workspaceId: string | null;
     sourceId: string | null;
+    lockedBy: string;
   }>;
   const row = rows[0];
   if (!row) return null;
@@ -183,9 +185,19 @@ export async function pollNextTask(
 
 /**
  * Mark the task completed + close the open `task_runs` row.
+ *
+ * Both UPDATEs are guarded by `locked_by = $workerId AND status = 'running'`
+ * so a lost-lease worker (janitor reset → another worker re-leased) cannot
+ * stomp on the new owner's state. When zero rows are affected we log a warn
+ * but do not throw — the new lease-holder is the source of truth and will
+ * drive the task to its terminal state on its own.
  */
-export async function completeTask(client: postgres.Sql, taskId: string): Promise<void> {
-  await client`
+export async function completeTask(
+  client: postgres.Sql,
+  taskId: string,
+  workerId: string,
+): Promise<void> {
+  const updated = (await client`
     UPDATE tasks SET
       status = 'completed',
       completed_at = now(),
@@ -193,13 +205,20 @@ export async function completeTask(client: postgres.Sql, taskId: string): Promis
       locked_until = NULL,
       last_error = NULL,
       updated_at = now()
-    WHERE id = ${taskId}
-  `;
+    WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
+    RETURNING id
+  `) as Array<{ id: string }>;
+  if (updated.length === 0) {
+    // Lost lease: another worker (or the janitor) has taken ownership. The
+    // new owner is responsible for the task's terminal state.
+    console.warn(`[tasks] completeTask: lost lease for task=${taskId} worker=${workerId}`);
+    return;
+  }
   await client`
     UPDATE task_runs SET
       finished_at = now(),
       status = 'completed'
-    WHERE task_id = ${taskId} AND finished_at IS NULL
+    WHERE task_id = ${taskId} AND finished_at IS NULL AND worker_id = ${workerId}
   `;
 }
 
@@ -227,6 +246,7 @@ export async function failTask(
   client: postgres.Sql,
   taskId: string,
   err: FailInput,
+  workerId: string,
   policy: RetryPolicy = DEFAULT_RETRY_POLICY,
 ): Promise<void> {
   // Truncate so the CHECK constraint (length ≤ 200) doesn't reject the UPDATE.
@@ -234,22 +254,30 @@ export async function failTask(
 
   // Look up current attempts to decide retry vs final. One read is cheap;
   // doing it in the UPDATE expression requires a CASE-rich statement that's
-  // harder to read.
+  // harder to read. Guarded by locked_by so a lost-lease read still reports
+  // the right exhaustion state for THIS worker.
   const rows = (await client`
-    SELECT attempts, max_attempts FROM tasks WHERE id = ${taskId}
+    SELECT attempts, max_attempts FROM tasks
+    WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
   `) as Array<{ attempts: number; max_attempts: number }>;
   const row = rows[0];
-  if (!row) return; // race with cancellation; nothing to update.
+  if (!row) {
+    // Lost lease (or task already terminal). The new lease-holder will drive
+    // it; this worker no longer owns the transition.
+    console.warn(`[tasks] failTask: lost lease for task=${taskId} worker=${workerId}`);
+    return;
+  }
 
   const exhausted = row.attempts >= row.max_attempts;
   const finalStatus = err.kind === 'permanent' || exhausted ? 'failed_permanent' : 'pending';
 
+  let updated: Array<{ id: string }>;
   if (finalStatus === 'pending') {
     const backoffIndex = Math.min(row.attempts - 1, policy.backoffSeconds.length - 1);
     // attempts has already been incremented by pollNextTask; backoff index is
     // (attempts - 1) so first retry uses backoffSeconds[0].
     const backoffSec = policy.backoffSeconds[Math.max(0, backoffIndex)] ?? 60;
-    await client`
+    updated = (await client`
       UPDATE tasks SET
         status = 'pending',
         scheduled_at = now() + (${backoffSec}::int * interval '1 second'),
@@ -257,10 +285,11 @@ export async function failTask(
         locked_until = NULL,
         last_error = ${safeError},
         updated_at = now()
-      WHERE id = ${taskId}
-    `;
+      WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
+      RETURNING id
+    `) as Array<{ id: string }>;
   } else {
-    await client`
+    updated = (await client`
       UPDATE tasks SET
         status = 'failed_permanent',
         completed_at = now(),
@@ -268,8 +297,16 @@ export async function failTask(
         locked_until = NULL,
         last_error = ${safeError},
         updated_at = now()
-      WHERE id = ${taskId}
-    `;
+      WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
+      RETURNING id
+    `) as Array<{ id: string }>;
+  }
+
+  if (updated.length === 0) {
+    console.warn(
+      `[tasks] failTask: lost lease during UPDATE for task=${taskId} worker=${workerId}`,
+    );
+    return;
   }
 
   await client`
@@ -277,7 +314,7 @@ export async function failTask(
       finished_at = now(),
       status = ${finalStatus === 'pending' ? 'failed' : 'failed_permanent'},
       error_message = ${safeError}
-    WHERE task_id = ${taskId} AND finished_at IS NULL
+    WHERE task_id = ${taskId} AND finished_at IS NULL AND worker_id = ${workerId}
   `;
 }
 
@@ -291,9 +328,10 @@ export async function deferTask(
   taskId: string,
   until: Date,
   reason: string,
+  workerId: string,
 ): Promise<void> {
   const safeReason = reason.length > 200 ? reason.slice(0, 200) : reason;
-  await client`
+  const updated = (await client`
     UPDATE tasks SET
       status = 'deferred',
       scheduled_at = ${until},
@@ -301,14 +339,19 @@ export async function deferTask(
       locked_until = NULL,
       last_error = ${safeReason},
       updated_at = now()
-    WHERE id = ${taskId}
-  `;
+    WHERE id = ${taskId} AND status = 'running' AND locked_by = ${workerId}
+    RETURNING id
+  `) as Array<{ id: string }>;
+  if (updated.length === 0) {
+    console.warn(`[tasks] deferTask: lost lease for task=${taskId} worker=${workerId}`);
+    return;
+  }
   await client`
     UPDATE task_runs SET
       finished_at = now(),
       status = 'failed',
       error_message = ${safeReason}
-    WHERE task_id = ${taskId} AND finished_at IS NULL
+    WHERE task_id = ${taskId} AND finished_at IS NULL AND worker_id = ${workerId}
   `;
 }
 

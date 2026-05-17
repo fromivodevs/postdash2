@@ -70,6 +70,15 @@ export interface PollResult {
   maxAttempts: number;
   workspaceId: string | null;
   sourceId: string | null;
+  /**
+   * `workerId` that owns the current lease on this task. Mirrors the value
+   * the caller passed to `pollNextTask` — surfaced on the result so the
+   * dispatcher can pass it back into `completeTask`/`failTask` for the
+   * lease-guarded UPDATE (`WHERE locked_by = $worker_id`). Without this round-
+   * trip a janitor-released-then-re-leased task could be marked completed by
+   * the original (now lost-lease) worker.
+   */
+  lockedBy: string;
 }
 
 /**

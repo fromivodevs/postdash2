@@ -1,4 +1,4 @@
-import { createAIProvider, parseAIEnv, IAMTokenCache, type IAMTokenStore } from '@postdash/ai';
+import { createAIProvider, parseAIEnv, type IAMTokenStore } from '@postdash/ai';
 import { createPool, parseDbEnv } from '@postdash/db';
 import pino, { type LoggerOptions } from 'pino';
 import { parseWorkerEnv } from './env.js';
@@ -21,22 +21,14 @@ const pool = createPool(dbEnv.DATABASE_URL);
 // so all worker processes share one token via the DB. This keeps
 // `packages/ai` free of any DB dependency (see architecture/global-ingestion.md
 // "Dependency graph": ai → injected IAMTokenStore, not → packages/db).
+//
+// The provider exposes its IAMTokenCache as `provider.iamToken`; `WorkerLoop`
+// detects the Yandex provider via `instanceof` and resolves the refresh hook
+// from that single cache instance. There is no sibling cache here — every
+// process holds exactly one IAMTokenCache, so `forceRefresh()` always operates
+// on the in-memory state the provider actually reads from.
 const iamStore: IAMTokenStore = systemStateIamStore(pool.db);
 const ai = createAIProvider(aiEnv, { iamStore });
-
-// Tag the provider with `_iamRefresh` so the refresh_iam_token task handler
-// has a path to forceRefresh without leaking the IAMTokenCache type through
-// the AIProvider interface. TemplateProvider gets a no-op; Yandex gets the
-// real refresh. See apps/worker/src/handlers/refresh-iam-token.ts.
-if (ai.name === 'yandex-deepseek') {
-  // The factory created its own IAMTokenCache internally. To call
-  // forceRefresh we'd need a reference. Construct a sibling cache that
-  // shares the same store + token JSON — they converge via writethrough.
-  const refreshable = new IAMTokenCache(aiEnv.YA_SA_KEY_JSON, { store: iamStore });
-  (ai as unknown as { _iamRefresh?: () => Promise<void> })._iamRefresh = async () => {
-    await refreshable.forceRefresh();
-  };
-}
 
 logger.info({ provider: ai.name }, 'AI provider initialized');
 

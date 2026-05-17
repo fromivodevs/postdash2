@@ -581,6 +581,14 @@ export const tasks = pgTable(
       .where(
         sql`${t.type} = 'janitor_release_stuck_tasks' AND ${t.status} IN ('pending', 'running')`,
       ),
+    // Phase 4 hardening (migration 0006): partial UNIQUE on the expression
+    // `payload->>'news_item_id'` for `extract_news_item` and `embed_news_item`.
+    // Drizzle's `.on()` builder takes table columns, not arbitrary SQL
+    // expressions; mirroring an expression-based UNIQUE here is impossible
+    // without an upstream API change. These indexes therefore live ONLY in
+    // 0006_phase4_hardening.sql — same convention as the ivfflat note above.
+    // Adding new expression-based indexes? Add them to the migration AND mention
+    // them here so schema readers know to look at the migration too.
   ],
 );
 
