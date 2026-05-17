@@ -29,6 +29,9 @@ export interface TelegramWebApp {
   BackButton?: TelegramBackButton;
   MainButton?: TelegramMainButton;
   SettingsButton?: TelegramSettingsButton;
+  /** Tells Telegram to show the "Close without saving?" prompt on dismiss. */
+  enableClosingConfirmation?: () => void;
+  disableClosingConfirmation?: () => void;
 }
 
 export interface TelegramBackButton {

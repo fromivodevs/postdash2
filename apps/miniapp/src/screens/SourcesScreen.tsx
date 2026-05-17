@@ -17,11 +17,12 @@ import { useState, type ReactNode } from 'react';
 import {
   Button,
   Cell,
+  ConfirmModal,
   ErrorState,
   List,
   Placeholder,
   Section,
-  Spinner,
+  Skeleton,
   useSnackbar,
 } from '../components/index.ts';
 import { useBackButton } from '../telegram/useBackButton.ts';
@@ -58,6 +59,10 @@ export function SourcesScreen(): ReactNode {
   // separately so only the row being mutated shows the loading state.
   const [pendingToggleSourceId, setPendingToggleSourceId] = useState<string | null>(null);
   const [pendingDeleteSourceId, setPendingDeleteSourceId] = useState<string | null>(null);
+  // §7 Modal tier — destructive actions need a confirmation step. Pending
+  // candidate stored as the full subscription so the modal can show the
+  // source name + URL without a second lookup.
+  const [deleteCandidate, setDeleteCandidate] = useState<SourceSubscriptionProjection | null>(null);
 
   const toggleMutation = useMutation<
     SourceSubscriptionProjection,
@@ -103,10 +108,18 @@ export function SourcesScreen(): ReactNode {
   });
 
   if (sourcesQuery.isLoading) {
+    // §6 Skeleton-first for list views — three placeholder cells with the
+    // shape of a real SourceCell give the user a clearer "loading" cue than
+    // a centered Spinner and prevent layout shift when content arrives.
     return (
       <Section header="Источники">
-        <div className="screen-center">
-          <Spinner size="m" />
+        <div className="sources-skeleton">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="sources-skeleton__row">
+              <Skeleton width="60%" height="18px" />
+              <Skeleton width="90%" height="14px" />
+            </div>
+          ))}
         </div>
       </Section>
     );
@@ -152,7 +165,7 @@ export function SourcesScreen(): ReactNode {
             onToggle={(enabled) =>
               toggleMutation.mutate({ sourceId: item.source.id, enabled })
             }
-            onDelete={() => deleteMutation.mutate(item.source.id)}
+            onDelete={() => setDeleteCandidate(item)}
             toggling={pendingToggleSourceId === item.source.id}
             deleting={pendingDeleteSourceId === item.source.id}
           />
@@ -168,6 +181,25 @@ export function SourcesScreen(): ReactNode {
           + Добавить источник
         </Button>
       </div>
+      <ConfirmModal
+        open={deleteCandidate !== null}
+        title="Удалить источник?"
+        description={
+          deleteCandidate
+            ? `Источник «${deleteCandidate.source.name ?? deleteCandidate.source.url}» будет отключён. Глобальная запись сохранится.`
+            : ''
+        }
+        confirmLabel="Удалить"
+        cancelLabel="Отмена"
+        destructive
+        onConfirm={() => {
+          if (deleteCandidate) {
+            deleteMutation.mutate(deleteCandidate.source.id);
+            setDeleteCandidate(null);
+          }
+        }}
+        onCancel={() => setDeleteCandidate(null)}
+      />
     </Section>
   );
 }

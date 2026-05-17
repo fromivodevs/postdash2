@@ -17,7 +17,8 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { getWebApp } from '../telegram/webapp.ts';
 import {
   Button,
   ErrorState,
@@ -73,6 +74,40 @@ export function SettingsScreen(): ReactNode {
       setNegativeKeywords(existing.negative_keywords.join(', '));
     }
   }, [existing]);
+
+  // §13: form has unsaved changes → ask Telegram to confirm before close.
+  // Dirty detection compares the form snapshot against what was loaded from
+  // the server (empty strings when no profile exists yet). Effect runs on
+  // every state change but the WebApp API itself dedups.
+  const isDirty = useMemo(() => {
+    if (!existing) {
+      return (
+        name.trim().length > 0 ||
+        mainTopics.trim().length > 0 ||
+        keywords.trim().length > 0 ||
+        negativeKeywords.trim().length > 0
+      );
+    }
+    return (
+      name !== existing.name ||
+      language !== existing.language ||
+      mainTopics !== existing.main_topics.join(', ') ||
+      keywords !== existing.keywords.join(', ') ||
+      negativeKeywords !== existing.negative_keywords.join(', ')
+    );
+  }, [existing, name, language, mainTopics, keywords, negativeKeywords]);
+
+  useEffect(() => {
+    const wa = getWebApp();
+    if (!wa) return;
+    if (isDirty) wa.enableClosingConfirmation?.();
+    else wa.disableClosingConfirmation?.();
+    return () => {
+      // Always release on unmount so navigating to another screen doesn't
+      // leak the prompt to unrelated routes.
+      wa.disableClosingConfirmation?.();
+    };
+  }, [isDirty]);
 
   const saveMutation = useMutation<TopicProfileProjection, Error, PostTopicInput>({
     mutationFn: async (input) => {

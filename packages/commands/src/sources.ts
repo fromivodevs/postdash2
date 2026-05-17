@@ -166,10 +166,17 @@ export async function createSource(
       // with a stale Settings UI can attach a source to a profile that's been
       // disabled, leading to "subscription pointed at a dead profile" state
       // that Phase 4 matching has no defined behaviour for.
+      // FOR SHARE prevents a concurrent deleteTopicProfile from soft-deleting
+      // this profile between the status check and the subscription INSERT.
+      // Under READ COMMITTED without the row lock, T1 (createSource) reads
+      // status='active', T2 (deleteTopicProfile) commits status='disabled',
+      // T1 INSERTs a subscription pointing at a now-disabled profile. The
+      // shared lock blocks T2's UPDATE on this row until T1 commits.
       const ownerRow = await tx
         .select({ workspaceId: topicProfiles.workspaceId, status: topicProfiles.status })
         .from(topicProfiles)
         .where(eq(topicProfiles.id, data.topicProfileId))
+        .for('share')
         .limit(1);
       const owner = ownerRow[0];
       if (!owner) throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
@@ -378,10 +385,17 @@ export async function updateSourceSubscription(
       // with a stale Settings UI can attach a source to a profile that's been
       // disabled, leading to "subscription pointed at a dead profile" state
       // that Phase 4 matching has no defined behaviour for.
+      // FOR SHARE prevents a concurrent deleteTopicProfile from soft-deleting
+      // this profile between the status check and the subscription INSERT.
+      // Under READ COMMITTED without the row lock, T1 (createSource) reads
+      // status='active', T2 (deleteTopicProfile) commits status='disabled',
+      // T1 INSERTs a subscription pointing at a now-disabled profile. The
+      // shared lock blocks T2's UPDATE on this row until T1 commits.
       const ownerRow = await tx
         .select({ workspaceId: topicProfiles.workspaceId, status: topicProfiles.status })
         .from(topicProfiles)
         .where(eq(topicProfiles.id, data.topicProfileId))
+        .for('share')
         .limit(1);
       const owner = ownerRow[0];
       if (!owner) throw new CommandError('not_found', `topic_profile ${data.topicProfileId} not found`);
