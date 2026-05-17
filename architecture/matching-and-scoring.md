@@ -632,7 +632,7 @@ should reset to page=1 rather than render the empty state.
 
 ## Status
 
-Active. **Closed at tag `phase-5-perfect-r4` with MIN=10 (PERFECT).** The r4
+Active. **Closed at tag `phase-5-perfect-r5` with MIN=10 (PERFECT).** The r4
 closure followed an amendment to `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md`
 that added two NON-NEGOTIABLE sections — "Phase Closure Discipline" (closure
 requires MIN=10; vague "Phase 8+ ops" deferrals are banned) and "Production
@@ -663,7 +663,9 @@ per-workspace fan-out silent loss fix, `ai_usage_events.error_message`
 length drift fix). r3 — re-ran the gates with no runtime code changes, same
 UNREACHABLE_10 status. r4 — plan-level amendment dissolved the ceiling and
 the same Phase 5 artifact now closes at PERFECT (MIN=10) because every
-previously-ceiling-contributing follow-up has a named-phase owner.
+previously-ceiling-contributing follow-up has a named-phase owner. r5
+revalidated the same artifact and fixed the final PROJECT_MAP active-system
+drift.
 
 The original closure iterated 5 sub-loops total (4 in main_loop=1 + 1
 fresh-confirm in main_loop=2) and landed 20 distinct
@@ -673,7 +675,8 @@ topic_profiles partial index) and 0010 (extended radar index with
 `created_at DESC`) were introduced during the original loop. Reports:
 `.claude/perfect-loop-runs/2026-05-17-phase-5/REPORT.md` and
 `.codex/perfect-loop-runs/20260517-phase-5-r2/REPORT.md` /
-`.codex/perfect-loop-runs/20260517-phase-5-r3/REPORT.md`.
+`.codex/perfect-loop-runs/20260517-phase-5-r3/REPORT.md` /
+`.codex/perfect-loop-runs/20260517-phase-5-r5/REPORT.md`.
 
 ## Last touched
 
