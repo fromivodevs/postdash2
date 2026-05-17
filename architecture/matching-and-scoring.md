@@ -80,6 +80,10 @@ Per-workspace radar entry. Колонки:
 
 **Cluster-level dedup** (см. `tg_mvp_plan/06-WORKERS-AND-INGESTION.md` §12.1):
 
+The primary dedup mechanism is the `pg_advisory_xact_lock` + `SELECT FOR
+UPDATE` pattern in `upsertWorkspaceNewsMatch` (see Invariants §1). The two
+partial UNIQUEs below remain as defence-in-depth at the DB layer:
+
 - `UNIQUE (workspace_id, cluster_id) WHERE cluster_id IS NOT NULL` —
   cluster-level. Одна и та же история из 5 источников → ОДНА match row per
   workspace (не 5).
@@ -212,8 +216,10 @@ breakdown без перерасчёта.
 - **`packages/commands/src/workspace-news-matches.ts`** — три команды
   (`upsertWorkspaceNewsMatch`, `suppressWorkspaceNewsMatch`, `listRadarMatches`)
   + zod input schemas + status enum + `ScoreComponents` type. The upsert
-  splits on `clusterId !== null` because Postgres ON CONFLICT requires
-  the partial-index target to be named explicitly.
+  runs inside `db.transaction` with `pg_advisory_xact_lock(hashtext(
+  workspace_id), hashtext(news_item_id))` + `SELECT ... FOR UPDATE`, so
+  concurrent matchers for the same (workspace, item) serialize regardless
+  of cluster_id state (see "Decision: advisory-lock + SELECT FOR UPDATE").
 - **`packages/ai/src/providers/yandex.ts`** — real `score()` + module-level
   helpers (`buildScoreMessages`, `extractJsonObject`, `finalizeScore`).
   `iamRefresh()` and `embed()` unchanged from Phase 4.
@@ -263,7 +269,10 @@ export async function listRadarMatches(db, input): Promise<RadarListResult>;
 // score_workspace_match payload
 {
   news_item_id: string /* uuid */,
-  cosine_pre_score: number | null
+  cosine_pre_score: number | null,
+  topic_embedding_updated_at_iso?: string | null  // snapshot at enqueue;
+                                                  // score handler drops cosine
+                                                  // if topic re-embedded since
 }
 
 // recompute_topic_embedding payload
@@ -366,9 +375,21 @@ rules: commands не depend'ят на tasks/worker, и не вносят invaria
 
 ## Invariants
 
-- **Cluster-level dedup гарантирован на DB layer.** Partial UNIQUE
-  `workspace_news_matches_workspace_cluster_uniq` гарантирует ≤1 row per
-  (workspace, cluster). Item-level UNIQUE — fallback для not-yet-clustered.
+- **Cluster-level dedup гарантирован на DB layer.** Все мутации
+  `workspace_news_matches` (через `upsertWorkspaceNewsMatch`) сначала
+  acquire'ят `pg_advisory_xact_lock(hashtext(workspace_id), hashtext(
+  news_item_id))`, потом делают `SELECT ... FOR UPDATE` по
+  `(workspace_id, news_item_id)` — concurrent matchers для одной и той же
+  (workspace, item) пары serialize на advisory lock, и второй writer видит
+  row первого независимо от того, успел cluster_news flip'нуть cluster_id
+  с NULL на не-NULL между запусками. Как complementary safety net,
+  pre-cluster item-level match rows (cluster_id IS NULL) мигрируются в
+  cluster-level внутри той же transaction'а, что и `news_cluster_items`
+  INSERT — это закрывает остаточное окно, где matcher уже committed'нул
+  item-level row до того, как cluster был привязан. Два partial UNIQUE
+  (`workspace_news_matches_workspace_cluster_uniq` для cluster-level и
+  `workspace_news_matches_workspace_item_uniq` для item-level) остаются
+  как defence-in-depth, а не первичный dedup-механизм.
 - **Score стабильно в [0, 10].** CHECK на DB layer + `Math.max/min` clamp
   в `finalizeScore` (Yandex) и `computeComposite` (worker).
 - **Reason ≤ 280 chars.** CHECK на DB layer + zod `.max(280)` в schemas +
@@ -429,17 +450,41 @@ tooltip'а — это естественнее формировать в JS.
 **Tradeoff:** при изменении весов нужен deploy кода (а не migration).
 Tunable через future env-vars если потребуется.
 
-### Decision: cluster-level dedup через TWO partial UNIQUEs
+### Decision: advisory-lock + SELECT FOR UPDATE вместо ON CONFLICT split
 
-**Considered:** один UNIQUE `(workspace_id, COALESCE(cluster_id, news_item_id))`
-с трюком "если cluster_id null, использовать news_item_id".
-**Chosen:** две partial UNIQUE.
-**Why:** Postgres partial UNIQUE на `COALESCE(...)` работает, но Drizzle's
-schema mirror и `onConflictDoUpdate` target требуют именованных колонок.
-Две отдельных partial UNIQUE — более explicit, проще на read'ом, и
-позволяет переключение natural key по runtime значению (`cluster_id IS NULL`).
-**Tradeoff:** UPSERT split на две ветки в `upsertWorkspaceNewsMatch`. Mitigated
-тем что обе ветки share один и тот же `set: {...}` clause.
+**Considered:** оставить две `INSERT ... ON CONFLICT DO UPDATE` ветки
+(`upsertByCluster` / `upsertByItem`), каждая bound к своей partial UNIQUE.
+**Chosen:** один transactional path с `pg_advisory_xact_lock(hashtext(
+workspace_id), hashtext(news_item_id))` → `SELECT ... FOR UPDATE` →
+UPDATE-or-INSERT.
+**Why:** ON CONFLICT split открывал race: matcher A читал cluster_id=NULL,
+cluster_news коммитил и flip'ал cluster_id на не-NULL, matcher A пытался
+INSERT с cluster_id=NULL — item-level partial UNIQUE
+(`WHERE cluster_id IS NULL`) уже не покрывала существующий row, и получался
+второй радар-row per (workspace, item). Advisory lock serialize'ит
+concurrent matchers до того как они видят cluster_id, а `FOR UPDATE`
+закрывает остаточный race с не-matcher writer'ами. Два partial UNIQUE
+оставлены как defence-in-depth.
+**Tradeoff:** каждый upsert тратит один advisory-lock запрос + один
+SELECT FOR UPDATE + один UPDATE/INSERT (3 statements) вместо одного
+ON CONFLICT. На матчер-fan-out пути это +O(workspaces) round-trips, но
+корректность важнее: дубликаты ломают cluster-level invariant.
+
+### Decision: listRadarMatches page-beyond-last semantics
+
+**Considered:** detect "page > totalPages" in the query and return either an
+error or a redirect to page=1.
+**Chosen:** `count(*) OVER ()` returns 0 when the LIMIT/OFFSET window is
+empty (no rows in the result set → no OVER() row either). The route returns
+`{items: [], total: 0, page: N}` and lets the caller interpret.
+**Why:** the API stays a thin SQL projection; UI knows which page it asked
+for and can disambiguate. Server-side redirect logic would need an extra
+COUNT round-trip to compute the "real" total.
+**Tradeoff:** UI consumers MUST treat `page > 1 AND total === 0` as "past
+last page" (re-request page=1 or show an empty-state with reset), NOT as
+"workspace has 0 matches". Mini App `selectRadarView` already covers the
+total=0/page=1 onboarding-empty case; consumers paginating past the end
+should reset to page=1 rather than render the empty state.
 
 ## Known follow-ups (Phase 5+ ops)
 
@@ -482,6 +527,11 @@ schema mirror и `onConflictDoUpdate` target требуют именованны
 - `packages/db/migrations/0008_phase5_matching_scoring.sql` + `.down.sql`
   — workspace_news_matches + ai_usage_events + tasks CHECK extension +
   partial UNIQUE indices.
+- `packages/db/migrations/0009_phase5_perf_indexes.sql` + `.down.sql`
+  — re-create `workspace_news_matches_workspace_status_score_idx` with
+  `score DESC NULLS LAST` (matches listRadarMatches ORDER BY); partial
+  `topic_profiles_pending_embedding_idx` for scheduler.slowTick recompute scan.
+  Drizzle mirror omits sort direction (parity-by-migration).
 - `packages/db/src/schema.ts` — mirror of new tables; tasks CHECK extended.
 - `packages/tasks/src/types.ts` — 3 new TaskType entries; queue default
   priorities updated for matcher / scorer / recompute.
@@ -558,7 +608,22 @@ schema mirror и `onConflictDoUpdate` target требуют именованны
 
 ## Status
 
-Active. Closed at tag `phase-5-perfect` (pending validation loop).
+Active. Closed at tag `phase-5-perfect`. Step-perfect-loop validation completed
+with final status ⚠ **UNREACHABLE_10 reason (a)** (scaffold-phase scope objectively
+caps below 10) — same closure pattern as Phase 4 (`phase-4-perfect-r4`). Best
+MIN=8 across both memory-injection mode (main_loop=1) and fresh-agent confirm
+(main_loop=2 sub_loop=1). All reviewers reported `blockers=[]` in the steady
+state; remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops items
+(Yandex circuit breaker, ai_usage_events token plumbing + err.message truncation,
+RUN_DB_TESTS=1 cluster-dedup integration tests, §12 mini-svg illustrations,
+slow-network warning) — all tracked in "Known follow-ups" above.
+
+Loop iterated 5 sub-loops total (4 in main_loop=1 + 1 fresh-confirm in
+main_loop=2) and landed 20 distinct correctness/security/perf/UX fixes across
+~35 file edits. Migrations 0009 (NULLS LAST radar index + topic_profiles
+partial index) and 0010 (extended radar index with `created_at DESC`) were
+introduced during the loop. Full loop report:
+`.claude/perfect-loop-runs/2026-05-17-phase-5/REPORT.md`.
 
 ## Last touched
 
