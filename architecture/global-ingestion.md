@@ -528,7 +528,7 @@ up only enough that the absence is not a silent footgun:
 
 ## Status
 
-Active. Closed at tag `phase-4-perfect-r2`. Phase 4+ ops follow-ups tracked in section above.
+Active. Closed at tag `phase-4-perfect-r4`. Phase 4+ ops follow-ups tracked in section above.
 
 ## Last touched
 
