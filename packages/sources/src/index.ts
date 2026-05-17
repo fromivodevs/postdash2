@@ -17,4 +17,5 @@ export {
   type ResolveRedirectOptions,
   type ResolveRedirectResult,
   type ResolveRedirectStatus,
+  type ResolvedHostSnapshot,
 } from './redirect-resolver.js';

@@ -16,10 +16,16 @@ import { useSession } from '../session/SessionProvider.tsx';
 import { ROUTES } from '../routing/routes.ts';
 import { postSource, type PostSourceInput } from '../api/sources.ts';
 import type { SourceSubscriptionProjection } from '../api/types.ts';
+import {
+  buildPostSourceInput,
+  narrowSourceType,
+  validateAddSourceForm,
+  type SourceTypeOption,
+} from './addSourceView.ts';
 
 const SOURCES_QUERY_KEY = ['sources'] as const;
 
-type SourceType = PostSourceInput['type'];
+type SourceType = SourceTypeOption;
 
 export function AddSourceScreen(): ReactNode {
   const [, navigate] = useLocation();
@@ -51,18 +57,13 @@ export function AddSourceScreen(): ReactNode {
   });
 
   const onSubmit = (): void => {
-    const trimmedUrl = url.trim();
-    if (!trimmedUrl) {
-      setUrlError('Укажи URL.');
+    const validation = validateAddSourceForm({ url, type, name });
+    if (!validation.ok) {
+      setUrlError(validation.urlError);
       return;
     }
     setUrlError(null);
-    const trimmedName = name.trim();
-    createMutation.mutate({
-      url: trimmedUrl,
-      type,
-      ...(trimmedName ? { name: trimmedName } : {}),
-    });
+    createMutation.mutate(buildPostSourceInput({ url, type, name }));
   };
 
   // §4 native chrome: sticky-bottom MainButton is the primary CTA. The
@@ -114,7 +115,7 @@ export function AddSourceScreen(): ReactNode {
           <select
             className="add-source-form__input"
             value={type}
-            onChange={(e) => setType(narrowType(e.target.value))}
+            onChange={(e) => setType(narrowSourceType(e.target.value))}
             aria-label="Тип источника"
           >
             <option value="rss">RSS</option>
@@ -150,9 +151,3 @@ export function AddSourceScreen(): ReactNode {
   );
 }
 
-function narrowType(s: string): SourceType {
-  if (s === 'website') return 'website';
-  if (s === 'manual') return 'manual';
-  if (s === 'api') return 'api';
-  return 'rss';
-}

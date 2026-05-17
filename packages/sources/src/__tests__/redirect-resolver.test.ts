@@ -234,6 +234,93 @@ describe('resolveRedirect: SSRF defence', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it('detects DNS rebinding: post-fetch resolve drops the pre-check IP', async () => {
+    // T0: dns.lookup returns 93.184.216.34 (public) → check passes
+    // T1: fetch runs (200 OK)
+    // T2: post-fetch dns.lookup returns 10.0.0.1 (private — attacker flipped)
+    //     → reject with blocked_private_ip
+    let call = 0;
+    const dns = async () => {
+      call++;
+      if (call === 1) return [{ address: '93.184.216.34', family: 4 } as const];
+      return [{ address: '10.0.0.1', family: 4 } as const];
+    };
+    const f = mockFetchChain([{ url: 'https://flippy.example/', status: 200 }]);
+    const r = await resolveRedirect('https://flippy.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('rebinding');
+  });
+
+  it('detects DNS rebinding: NEW private IP appears in the resolved set', async () => {
+    // T0: dns returns [public_a]
+    // T2: dns returns [public_a, private_b] — old IP still there but a new
+    //     private IP was added. Connect might have landed on either.
+    let call = 0;
+    const dns = async () => {
+      call++;
+      if (call === 1) return [{ address: '93.184.216.34', family: 4 } as const];
+      return [
+        { address: '93.184.216.34', family: 4 } as const,
+        { address: '169.254.169.254', family: 4 } as const,
+      ];
+    };
+    const f = mockFetchChain([{ url: 'https://hybrid.example/', status: 200 }]);
+    const r = await resolveRedirect('https://hybrid.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('rebinding');
+  });
+
+  it('accepts when post-fetch DNS returns same IP set (no rebinding)', async () => {
+    const dns = async () => [{ address: '93.184.216.34', family: 4 } as const];
+    const f = mockFetchChain([{ url: 'https://stable.example/', status: 200 }]);
+    const r = await resolveRedirect('https://stable.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('no_redirect');
+  });
+
+  it('accepts when post-fetch adds a new PUBLIC IP (load-balancer expansion is not rebinding)', async () => {
+    let call = 0;
+    const dns = async () => {
+      call++;
+      if (call === 1) return [{ address: '93.184.216.34', family: 4 } as const];
+      return [
+        { address: '93.184.216.34', family: 4 } as const,
+        // Another public IP — common for load-balanced services.
+        { address: '93.184.216.35', family: 4 } as const,
+      ];
+    };
+    const f = mockFetchChain([{ url: 'https://lb.example/', status: 200 }]);
+    const r = await resolveRedirect('https://lb.example/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('no_redirect');
+  });
+
+  it('skips DNS stability check for bare-IP hosts (no DNS to rebind)', async () => {
+    const dns = vi.fn(); // should not be called
+    const f = mockFetchChain([{ url: 'https://93.184.216.34/', status: 200 }]);
+    const r = await resolveRedirect('https://93.184.216.34/', {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dns,
+    });
+    expect(r.status).toBe('no_redirect');
+    expect(dns).not.toHaveBeenCalled();
+  });
+
   it('blocks when ANY of multiple DNS addresses is private (mixed A-records)', async () => {
     const mixed = async () => [
       { address: '93.184.216.34', family: 4 } as const,

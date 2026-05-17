@@ -138,10 +138,64 @@ async function defaultDnsLookup(host: string): Promise<Array<{ address: string; 
   return dns.promises.lookup(host, { all: true });
 }
 
+/**
+ * Snapshot of the resolved IPs for a hostname. Captured before fetch so a
+ * post-fetch re-resolve can detect DNS rebinding (attacker flipped DNS
+ * between our check and the fetch's TCP connect). Bare-IP hostnames return
+ * an empty set — there is no DNS to rebind.
+ */
+export interface ResolvedHostSnapshot {
+  hostname: string;
+  resolvedIps: ReadonlyArray<string>;
+}
+
+/**
+ * Compares a pre-fetch snapshot against a fresh resolve. If the IP set
+ * changed, an attacker may have flipped DNS during the fetch window (or
+ * legitimate failover happened — we conservatively treat both as rebinding).
+ */
+async function checkDnsStability(
+  snapshot: ResolvedHostSnapshot,
+  dnsLookup: DnsLookupFn,
+): Promise<{ stable: true } | { stable: false; reason: string }> {
+  if (snapshot.resolvedIps.length === 0) return { stable: true }; // bare-IP host
+  try {
+    const records = await dnsLookup(snapshot.hostname);
+    const after = new Set(records.map((r) => r.address));
+    for (const ip of snapshot.resolvedIps) {
+      if (!after.has(ip)) {
+        return {
+          stable: false,
+          reason: `DNS rebinding detected: ${ip} → no longer resolved`,
+        };
+      }
+    }
+    // Also flag NEWLY-introduced IPs as suspicious (the connect could have
+    // landed on them mid-fetch). Reject only if a new IP is private.
+    for (const ip of after) {
+      if (!snapshot.resolvedIps.includes(ip)) {
+        const check = isBlockedIpv4(ip).blocked
+          ? isBlockedIpv4(ip)
+          : isBlockedIpv6(ip);
+        if (check.blocked) {
+          return {
+            stable: false,
+            reason: `DNS rebinding: new private IP appeared: ${check.reason}`,
+          };
+        }
+      }
+    }
+    return { stable: true };
+  } catch {
+    // Re-resolve failed → conservative: treat as unstable.
+    return { stable: false, reason: 'post-fetch DNS lookup failed' };
+  }
+}
+
 async function checkUrlNotPrivate(
   url: string,
   dnsLookup: DnsLookupFn,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<{ ok: true; snapshot: ResolvedHostSnapshot } | { ok: false; reason: string }> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -166,7 +220,8 @@ async function checkUrlNotPrivate(
     const v6 = isBlockedIpv6(host);
     if (v6.blocked) return { ok: false, reason: `private/internal IPv6: ${v6.reason}` };
   }
-  // Real hostname: resolve and check every address.
+  // Real hostname: resolve and check every address. Capture the IP set in
+  // the snapshot so a post-fetch re-resolve can detect DNS rebinding.
   if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) && !host.includes(':')) {
     try {
       const records = await dnsLookup(host);
@@ -176,13 +231,18 @@ async function checkUrlNotPrivate(
           return { ok: false, reason: `DNS resolved to private/internal IP: ${check.reason}` };
         }
       }
+      return {
+        ok: true,
+        snapshot: { hostname: host, resolvedIps: records.map((r) => r.address) },
+      };
     } catch {
       // DNS failure → fail open; the subsequent fetch will get network_error
       // and the caller falls back to canonicalizing the raw URL.
-      return { ok: true };
+      return { ok: true, snapshot: { hostname: host, resolvedIps: [] } };
     }
   }
-  return { ok: true };
+  // Bare-IP host (no DNS to rebind).
+  return { ok: true, snapshot: { hostname: host, resolvedIps: [] } };
 }
 
 export interface ResolveRedirectOptions {
@@ -290,11 +350,13 @@ export async function resolveRedirect(
 
   // SSRF gate on the initial URL. Done BEFORE any fetch so a malicious
   // direct-private-IP input never causes outbound traffic.
+  let currentSnapshot: ResolvedHostSnapshot | null = null;
   if (!skipSsrfCheck) {
     const initialCheck = await checkUrlNotPrivate(currentUrl, dnsLookup);
     if (!initialCheck.ok) {
       return { finalUrl: currentUrl, status: 'blocked_private_ip', hops: 0, error: initialCheck.reason };
     }
+    currentSnapshot = initialCheck.snapshot;
   }
 
   // Total-budget timer across all hops. Worst case otherwise is
@@ -384,7 +446,8 @@ export async function resolveRedirect(
         return { finalUrl: currentUrl, status: 'network_error', hops, error: 'invalid_location' };
       }
       // SSRF re-check: a public initial URL can 302 to a private IP. Verify
-      // every hop, not just the input.
+      // every hop, not just the input. Refresh the snapshot for stability
+      // check on the next iteration.
       if (!skipSsrfCheck) {
         const hopCheck = await checkUrlNotPrivate(nextUrl, dnsLookup);
         if (!hopCheck.ok) {
@@ -395,12 +458,27 @@ export async function resolveRedirect(
             error: hopCheck.reason,
           };
         }
+        currentSnapshot = hopCheck.snapshot;
       }
       currentUrl = nextUrl;
       continue;
     }
 
     // Non-redirect response (or redirect with no Location) → done.
+    // DNS rebinding post-check: re-resolve and verify the IP set is stable.
+    // If the attacker flipped DNS between our pre-fetch check and the actual
+    // connect, the post-resolve will show different IPs and we reject.
+    if (!skipSsrfCheck && currentSnapshot && currentSnapshot.resolvedIps.length > 0) {
+      const stability = await checkDnsStability(currentSnapshot, dnsLookup);
+      if (!stability.stable) {
+        return {
+          finalUrl: currentUrl,
+          status: 'blocked_private_ip',
+          hops,
+          error: stability.reason,
+        };
+      }
+    }
     return {
       finalUrl: currentUrl,
       status: hops === 0 ? 'no_redirect' : 'resolved',
