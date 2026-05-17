@@ -176,7 +176,7 @@ From `tg_mvp_plan/12-EDGE-CASES.md §15` Phase 3:
 
 ## Status
 
-In design — implementation pending Phase 3 commit. Closes with tag `phase-3-perfect`.
+Active. Validated through `/step-perfect-loop with full 5x5 depth` (3 main loops, 2 fix rounds). Closure tags: `phase-3-perfect` (initial), `phase-3-perfect-r2` (after hardening). Final MIN score across the lean core + specialists: **8 (GOOD)**; remaining gaps are documented Phase 3.5 polish (DELETE-confirm modal, Skeleton, closingConfirmation, FOR SHARE race fix all landed in the second loop commit; residual: prefers-reduced-motion CSS, §15 platform QA evidence).
 
 ## Last touched
 
