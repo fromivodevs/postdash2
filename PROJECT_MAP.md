@@ -78,20 +78,33 @@
   - `src/screens/__tests__/splitTags.test.ts` — 4 tests for tag parsing helper
   - Total miniapp tests: 109 (incl. ChannelScreen 24, channels api 15, splitTags 4)
 - `apps/worker/` — task polling, IAM refresh, AI calls (Phase 4+)
-  - `src/index.ts` — entry, pino logger
-  - `src/loop.ts` — `WorkerLoop` class (Phase 0: no-op tick)
+  - `src/index.ts` — entry, pino logger, wires IAM store + AIProvider into WorkerLoop
+  - `src/loop.ts` — `WorkerLoop`: N polling slots + scheduler
   - `src/env.ts` — zod env validation (friendly ZodError wrapper)
+  - `src/dispatcher.ts` — Dispatcher + task-type → handler routing + failure classification
+  - `src/scheduler.ts` — in-process cron: fastTick (1/min: enqueue fetch_source) + slowTick (5/min: janitor + iam refresh)
+  - `src/system-state-store.ts` — `IAMTokenStore` adapter backed by `system_state` table (keeps `packages/ai` free of DB deps)
+  - `src/handlers/fetch-source.ts` — RSS fetch + upsert global_news_items + enqueue downstream
+  - `src/handlers/extract-news-item.ts` — Phase 4 MVP: summary → extracted_text + enqueue embed
+  - `src/handlers/embed-news-item.ts` — call ai.embed, persist vector, enqueue cluster
+  - `src/handlers/cluster-news.ts` — pgvector nearest-neighbour + centroid recompute
+  - `src/handlers/janitor-release-stuck-tasks.ts` — call releaseStuckTasks
+  - `src/handlers/refresh-iam-token.ts` — invoke `_iamRefresh` on tagged provider
+  - `src/handlers/index.ts` — re-exports
+  - `src/__tests__/dispatcher.test.ts` — 4 routing/retry-classification tests
 
 ### Packages
 - `packages/ai/` — AIProvider interface + Yandex DeepSeek + Template fallback
   - `src/provider.ts` — zod schemas + `AIProvider` interface + `AIProviderError`; `DraftOutputSchema.post_text` channel-agnostic (no max cap; see Phase 9/13)
   - `src/providers/template.ts` — `TemplateProvider` (Format A fallback); code-point-safe truncation via `[...rawText].slice()`
-  - `src/providers/yandex.ts` — `YandexAIStudioDeepSeekProvider` skeleton
-  - `src/iam-token.ts` — `IAMTokenCache` (refresh stub до Phase 4)
+  - `src/providers/yandex.ts` — `YandexAIStudioDeepSeekProvider`: real `embed()` (Phase 4) + score/generate/rewrite stubs (Phase 5/6). dim-mismatch reject, single 401-retry-with-forceRefresh.
+  - `src/iam-token.ts` — Phase 4 real `IAMTokenCache`: PS256 JWT signed via node:crypto, IAM exchange, in-memory + writethrough store (`IAMTokenStore` injected by worker; preserves "ai не зависит от db" rule), single-flight refresh, forceRefresh on 401.
   - `src/env.ts` — zod AI env validation (friendly ZodError wrapper)
-  - `src/index.ts` — `createAIProvider`: placeholder-detect + prod hard-fail (opt-out via `AI_FALLBACK_TO_TEMPLATE=true`)
-  - `src/__tests__/template.test.ts` — 6 tests (incl. surrogate-pair-safe truncation)
-  - `src/__tests__/factory.test.ts` — ~9 tests (placeholder-detect, prod-fail, opt-in)
+  - `src/index.ts` — `createAIProvider(env, { iamStore?, fetch? })`: placeholder-detect + prod hard-fail (opt-out via `AI_FALLBACK_TO_TEMPLATE=true`); wires store + embeddingDim into Yandex provider
+  - `src/__tests__/template.test.ts` — 7 tests (incl. surrogate-pair-safe truncation)
+  - `src/__tests__/factory.test.ts` — 7 tests (placeholder-detect, prod-fail, opt-in)
+  - `src/__tests__/iam-token.test.ts` — 12 tests (cache, single-flight, store roundtrip, 401, malformed body, forceRefresh)
+  - `src/__tests__/yandex-embed.test.ts` — 8 tests (success, doc-vs-query URI, dim mismatch, 5xx/429/4xx, empty text, 401-retry path)
   - `README.md` — architectural rule: channel-agnostic core; TemplateProvider as documented MVP exception
 - `packages/db/` — Drizzle ORM + Postgres pool + migrations
   - `drizzle.config.ts` — config для `drizzle-kit generate`
@@ -104,6 +117,7 @@
   - `migrations/0001_phase1.sql` / `0001_phase1.down.sql` — Phase 1 tables
   - `migrations/0002_phase2.sql` / `0002_phase2.down.sql` — Phase 2: `content_channels`, `channel_connections`, `channel_connect_codes`
   - `migrations/0003_phase3.sql` / `0003_phase3.down.sql` — Phase 3: `topic_profiles` (with embedding nullable), `sources` (canonical_url UNIQUE), `workspace_source_subscriptions`
+  - `migrations/0005_phase4.sql` / `0005_phase4.down.sql` — Phase 4: `system_state`, `tasks` (+3 partial unique anti-dupe indices), `task_runs`, `global_news_items` (+ivfflat embedding index), `news_clusters`, `news_cluster_items` (UNIQUE news_item_id → one cluster per item)
 - `packages/shared/` — общий код между backend и Mini App
   - `src/telegram-format.ts` — `TELEGRAM_POST_MAX_LENGTH = 4096` constant + `fitsTelegramPostLimit(text)` helper; Phase 6: full parser
   - `src/channel-projection.ts` — Phase 2: wire types (`ChannelProjection`, `ConnectCodeProjection`) + `buildConnectDeepLink`
@@ -137,6 +151,11 @@
   - `src/__tests__/topic-profiles.test.ts` — 9 tests
   - `src/__tests__/sources.test.ts` — 10 tests
   - `src/__tests__/` — 55 tests total
+- `packages/tasks/` — Phase 4 task queue primitives (no business logic)
+  - `src/types.ts` — `TASK_TYPES` + `TASK_STATUSES` exhaustive lists (mirror migration CHECK), `EnqueueTaskInputSchema` (zod), `DEFAULT_RETRY_POLICY` (10s/30s/90s backoff matching §15 of WORKERS-AND-INGESTION)
+  - `src/queue.ts` — `enqueueTask` (ON CONFLICT DO NOTHING via partial uniques), `pollNextTask` (atomic `FOR UPDATE SKIP LOCKED`), `completeTask`, `failTask` (transient→retry-with-backoff / permanent→failed_permanent), `deferTask` (Phase 6 hook), `releaseStuckTasks` (janitor SQL with attempts-exhausted promotion)
+  - `src/index.ts` — re-exports
+  - `src/__tests__/types.test.ts` — 7 tests (type/status enum mirrors, zod schema, default policy)
 - `packages/policies/` — auth, role, integrity checks (Phase 1+)
 - `packages/domain/` — pure business types (Phase 1+)
   - `src/identity.ts` — identity types
@@ -144,11 +163,15 @@
   - `src/topic.ts` — Phase 3: `TopicProfile`, `TopicProfileLanguage`, `ToneProfile`, narrowers
   - `src/source.ts` — Phase 3: `Source`, `WorkspaceSourceSubscription`, `SourceType`, `SourceStatus`, narrowers
   - `src/index.ts` — re-exports all domain types
-- `packages/sources/` — RSS fetchers + URL canonicalization (Phase 3+)
+- `packages/sources/` — RSS fetchers + URL canonicalization + content-hash (Phase 3-4)
   - `src/canonicalize.ts` — Phase 3 `canonicalize(url)` rules per `tg_mvp_plan/06-WORKERS-AND-INGESTION.md §9` + `CANONICALIZATION_RULE_VERSION`
-  - `src/redirect-resolver.ts` — Phase 3 one-time HTTP HEAD follow with timeout/max-hop/fallback
-  - `src/__tests__/canonicalize.test.ts` — 23 tests (scheme, www, trailing slash, utm, sort, fragment, HN/Reddit/X overrides, idempotence)
-  - `src/__tests__/redirect-resolver.test.ts` — 11 tests (chain, max-hop, timeout, HEAD-405 fallback, relative location)
+  - `src/redirect-resolver.ts` — Phase 3 one-time HTTP HEAD follow with timeout/max-hop/SSRF/rebinding defence
+  - `src/rss-parser.ts` — Phase 4 `fetchRssSource(url, opts)` — AbortController timeout, polite UA, status classification ('ok'|'4xx'|'5xx'|'parse_error'|'timeout'|'network_error'), volume cap (`maxItems`, sorts by published_at DESC before cap), `detectLanguage(text)` helper
+  - `src/content-hash.ts` — Phase 4 `contentHash({title, summary?, publishedAt?})` → sha256 hex; whitespace-trimmed, missing→empty (stable), `CONTENT_HASH_RULE_VERSION`
+  - `src/__tests__/canonicalize.test.ts` — 23 tests
+  - `src/__tests__/redirect-resolver.test.ts` — 35 tests
+  - `src/__tests__/rss-parser.test.ts` — 13 tests (parse, cap, sort, 4xx/5xx, parse_error, empty, timeout, missing fields, detectLanguage 4 cases)
+  - `src/__tests__/content-hash.test.ts` — 8 tests (identical, title/summary/publishedAt diff, missing-summary == empty, stable for absent publishedAt, whitespace normalization, 64-char hex)
 
 ### Plan
 - `tg_mvp_plan/` — 14 markdown-документов (entrypoint: `tg_mvp_plan/README.md`)
@@ -164,8 +187,11 @@
 
 - `architecture/channel-connection.md` — Phase 2 channel-connection system. *Active.* 3 DB tables, 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (33 tests), 4-state Mini App screen. Closed tag: `phase-2-perfect`.
 - `architecture/topics-and-sources.md` — Phase 3 topics + sources. *Active.* 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), 4 topic commands + 4 source commands, `canonicalize` + `resolveRedirect` in `@postdash/sources`, 8 REST endpoints, 3 Mini App screens (Settings/Sources/AddSource). Latest closure `phase-3-perfect-r8`.
+- `architecture/global-ingestion.md` — Phase 4 task system + global ingestion + embeddings. *In progress.* 6 new DB tables (`tasks`, `task_runs`, `system_state`, `global_news_items`, `news_clusters`, `news_cluster_items`), new `packages/tasks` queue, `fetchRssSource` + `contentHash` in `@postdash/sources`, real Yandex IAM (PS256 JWT) + `embed()`, 6 task handlers + in-process scheduler in `apps/worker`. Closes edges 4.1/4.2/4.3/4.4/4.5/4.10/5.5/6.5/9.1/9.2/9.3/9.4/9.5/9.8/10.5/11.x.
 
 ## Recent changes (last 10)
+
+- 2026-05-17: Phase 4 (Task system + Global ingestion + Embeddings) implemented on `phase/4-global-ingestion-embeddings`. New migration `0005_phase4.sql` (6 tables: system_state, tasks, task_runs, global_news_items+ivfflat, news_clusters, news_cluster_items; 3 partial-unique anti-dupe indices on tasks). New `packages/tasks` queue (atomic `FOR UPDATE SKIP LOCKED` polling, retry-with-backoff, releaseStuckTasks janitor — 7 tests). RSS fetcher + content-hash in `@postdash/sources` (21 new tests). Real Yandex IAM (`packages/ai/iam-token.ts`: PS256 JWT via node:crypto, system_state writethrough via injected `IAMTokenStore`, single-flight refresh, forceRefresh on 401 — 12 tests). Real `YandexAIStudioDeepSeekProvider.embed()` (256-dim validation, dim-mismatch reject, doc/query URI selection — 8 tests). 6 task handlers in `apps/worker/` + Dispatcher (4 tests) + in-process Scheduler (fast 1/min + slow 5/min). Total workspace tests: 492+ (sources 79 + ai 34 + tasks 7 + commands 58 + miniapp 145 + api 95 + worker 4 + channel-adapters 33 + shared 33 + db 4). Architecture: `architecture/global-ingestion.md`.
 
 - 2026-05-17: Phase 3 (Topics + Sources) implemented on `phase/3-topics-sources`. 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), URL canonicalization + redirect resolver in `@postdash/sources` (34 tests), 8 commands (`create/update/delete/list` × topics+sources, 19 tests), 8 REST endpoints (12 route tests), 3 Mini App screens (Settings/Sources/AddSource). Total workspace tests: 365+ (sources 34 + commands 55 + miniapp 109 + api 95 + others). Architecture: `architecture/topics-and-sources.md`.
 
