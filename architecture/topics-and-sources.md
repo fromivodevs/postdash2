@@ -178,7 +178,7 @@ From `tg_mvp_plan/12-EDGE-CASES.md §15` Phase 3:
 
 ## Status
 
-Active. Validated through two `/step-perfect-loop with full 5x5 depth` runs (4 main loops total, 4 fix-commit rounds). Closure tags: `phase-3-perfect` (initial), `phase-3-perfect-r2` (after round-1/2 hardening), `phase-3-perfect-r3` (after round-3/4 polish). Final MIN score: **8–9 (GOOD)**; `pl-breaker` reached **10** in round 4 ("exhausted realistic attack surface"). Only remaining gaps: §15 manual cross-platform QA (unreachable from automated review) and DNS rebinding for Phase 4 consume-side.
+Active. Validated through three `/step-perfect-loop` runs (5 main loops total, 5 fix-commit rounds + 2 follow-ups). Closure tags: `phase-3-perfect` → `r2` → `r3` → `phase-3-perfect-r4` (current). Final MIN score: **8 (GOOD)**; `pl-breaker` held at **10** through rounds 4 and 5 ("surface_still_exhausted: yes"). Round 5 closed DNS rebinding (detection-only via post-fetch DNS re-resolve; true IP-pinning deferred to Phase 4 fetcher). Only remaining cap: `pl-performance-analyst` at 8 from `operation_log` 1-round-trip overhead — Rule 6 makes this architecturally required, not a defect. §15 manual cross-platform QA gap is unreachable from automated review by definition.
 
 ## Last touched
 
