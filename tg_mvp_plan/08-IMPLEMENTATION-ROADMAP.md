@@ -548,7 +548,7 @@ MVP готов для 10–30 early users.
 - [x] Phase 0 — Project foundation + AI scaffolding
 - [x] Phase 1 — Identity, workspace, Telegram Mini App auth
 - [x] Phase 2 — Channel connection
-- [ ] Phase 3 — Topics and sources
+- [x] Phase 3 — Topics and sources
 - [ ] Phase 4 — Task system, global ingestion, embeddings
 - [ ] Phase 5 — Matching and scoring
 - [ ] Phase 6 — AI draft generation, editor, cost guard

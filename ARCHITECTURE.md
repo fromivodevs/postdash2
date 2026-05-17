@@ -15,6 +15,7 @@
 
 - [channel-connection](architecture/channel-connection.md) — Telegram channel binding to workspace (Phase 2): connect codes, bot post-permission verification, deep-link `/start connect_<code>` flow. *Status: Active. Closed: phase-2-perfect.*
 - [database](architecture/database.md) — Postgres provider policy: **Neon everywhere**, no Docker / Supabase / RDS. One DB per developer + per phase branch. *Status: Active. Authoritative since 2026-05-16.*
+- [topics-and-sources](architecture/topics-and-sources.md) — Phase 3 per-workspace topic profiles + global source registry + per-workspace M:N subscriptions. URL canonicalization + one-time redirect resolution. *Status: Active. Closes with `phase-3-perfect`.*
 
 ## Deprecated systems
 

@@ -44,8 +44,13 @@
   - `src/__tests__/routes-auth.test.ts` — auth route tests
   - `src/__tests__/routes-webhook.test.ts` — webhook route tests
   - `src/__tests__/telegram-webhook-hardening.test.ts` — webhook hardening tests
+  - `src/__tests__/routes-topics.test.ts` — Phase 3 topics route tests (7)
+  - `src/__tests__/routes-sources.test.ts` — Phase 3 sources route tests (5)
   - `src/__tests__/helpers/` — shared test helpers
-  - Total API tests: 82
+  - `src/routes/topics.ts` — Phase 3 `POST/GET/PATCH/DELETE /topics`
+  - `src/routes/sources.ts` — Phase 3 `POST/GET/PATCH/DELETE /sources`
+  - `src/routes/topics-projection.ts` — Phase 3 domain → wire projections
+  - Total API tests: 95
 - `apps/miniapp/` — Vite + React 18 + Telegram SDK Mini App
   - `vite.config.ts`, `index.html`
   - `src/main.tsx` — provider tree (Query / AppRoot / Router / Snackbar / Session)
@@ -65,7 +70,13 @@
   - `src/telegram/` — WebApp boot, theme listener, AppRoot, BackButton/MainButton hooks
   - `src/routing/` — route table + Telegram `start_param` deep-link mapping (§10)
   - `scripts/check-bundle-size.mjs` — gzip bundle budget gate (§5/§13), `.bundle-size-baseline.json`
-  - Total miniapp tests: 104 (incl. ChannelScreen 23, channels api 15)
+  - `src/api/topics.ts` — Phase 3 topics API client
+  - `src/api/sources.ts` — Phase 3 sources API client
+  - `src/screens/SettingsScreen.tsx` — Phase 3 topic profile edit form (upsert)
+  - `src/screens/SourcesScreen.tsx` — Phase 3 sources list (toggle/delete)
+  - `src/screens/AddSourceScreen.tsx` — Phase 3 URL+type add form
+  - `src/screens/__tests__/splitTags.test.ts` — 4 tests for tag parsing helper
+  - Total miniapp tests: 109 (incl. ChannelScreen 24, channels api 15, splitTags 4)
 - `apps/worker/` — task polling, IAM refresh, AI calls (Phase 4+)
   - `src/index.ts` — entry, pino logger
   - `src/loop.ts` — `WorkerLoop` class (Phase 0: no-op tick)
@@ -92,12 +103,14 @@
   - `migrations/0000_init.sql` — `CREATE EXTENSION vector`
   - `migrations/0001_phase1.sql` / `0001_phase1.down.sql` — Phase 1 tables
   - `migrations/0002_phase2.sql` / `0002_phase2.down.sql` — Phase 2: `content_channels`, `channel_connections`, `channel_connect_codes`
+  - `migrations/0003_phase3.sql` / `0003_phase3.down.sql` — Phase 3: `topic_profiles` (with embedding nullable), `sources` (canonical_url UNIQUE), `workspace_source_subscriptions`
 - `packages/shared/` — общий код между backend и Mini App
   - `src/telegram-format.ts` — `TELEGRAM_POST_MAX_LENGTH = 4096` constant + `fitsTelegramPostLimit(text)` helper; Phase 6: full parser
   - `src/channel-projection.ts` — Phase 2: wire types (`ChannelProjection`, `ConnectCodeProjection`) + `buildConnectDeepLink`
   - `src/index.ts` — re-exports `TELEGRAM_POST_MAX_LENGTH`, `fitsTelegramPostLimit`, channel-projection
   - `src/__tests__/telegram-format.test.ts` — 4 tests for `fitsTelegramPostLimit`
   - `src/__tests__/` — 33 tests total (incl. channel-projection 11)
+  - `src/topic-source-projection.ts` — Phase 3 wire schemas: `TopicProfileProjection`, `SourceProjection`, `SourceSubscriptionProjection` + list shapes
 - `packages/channel-adapters/` — Telegram (Phase 2+) / VK / Discord (future)
   - `README.md` — architectural rule: channel-agnostic core; adapter scope documented
   - `src/telegram/types.ts` — Telegram adapter types
@@ -118,13 +131,24 @@
   - `src/connect-telegram-channel.ts` — Phase 2: bind Telegram chat to workspace
   - `src/connect-code-helpers.ts` — Phase 2: connect code utilities
   - `src/policies.ts` — Phase 2: command-level policy checks
-  - `src/__tests__/` — 36 tests total
+  - `src/topic-profiles.ts` — Phase 3 create/update/delete/list with upsert semantics
+  - `src/sources.ts` — Phase 3 create/update/delete/list with redirect+canonicalize+global-source dedup
+  - `src/topic-row-mappers.ts` — Phase 3 row → domain mappers
+  - `src/__tests__/topic-profiles.test.ts` — 9 tests
+  - `src/__tests__/sources.test.ts` — 10 tests
+  - `src/__tests__/` — 55 tests total
 - `packages/policies/` — auth, role, integrity checks (Phase 1+)
 - `packages/domain/` — pure business types (Phase 1+)
   - `src/identity.ts` — identity types
   - `src/channel.ts` — Phase 2: `ContentChannel`, `ChannelConnection`, `ChannelConnectCode` pure types + `narrow*` helpers + `MAX_EXTERNAL_CHAT_ID_LEN`
+  - `src/topic.ts` — Phase 3: `TopicProfile`, `TopicProfileLanguage`, `ToneProfile`, narrowers
+  - `src/source.ts` — Phase 3: `Source`, `WorkspaceSourceSubscription`, `SourceType`, `SourceStatus`, narrowers
   - `src/index.ts` — re-exports all domain types
 - `packages/sources/` — RSS fetchers + URL canonicalization (Phase 3+)
+  - `src/canonicalize.ts` — Phase 3 `canonicalize(url)` rules per `tg_mvp_plan/06-WORKERS-AND-INGESTION.md §9` + `CANONICALIZATION_RULE_VERSION`
+  - `src/redirect-resolver.ts` — Phase 3 one-time HTTP HEAD follow with timeout/max-hop/fallback
+  - `src/__tests__/canonicalize.test.ts` — 23 tests (scheme, www, trailing slash, utm, sort, fragment, HN/Reddit/X overrides, idempotence)
+  - `src/__tests__/redirect-resolver.test.ts` — 11 tests (chain, max-hop, timeout, HEAD-405 fallback, relative location)
 
 ### Plan
 - `tg_mvp_plan/` — 14 markdown-документов (entrypoint: `tg_mvp_plan/README.md`)
@@ -139,8 +163,11 @@
 См. `ARCHITECTURE.md`.
 
 - `architecture/channel-connection.md` — Phase 2 channel-connection system. *Active.* 3 DB tables, 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (33 tests), 4-state Mini App screen. Closed tag: `phase-2-perfect`.
+- `architecture/topics-and-sources.md` — Phase 3 topics + sources. *Active.* 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), 4 topic commands + 4 source commands, `canonicalize` + `resolveRedirect` in `@postdash/sources`, 8 REST endpoints, 3 Mini App screens (Settings/Sources/AddSource). Closes with `phase-3-perfect`.
 
 ## Recent changes (last 10)
+
+- 2026-05-17: Phase 3 (Topics + Sources) implemented on `phase/3-topics-sources`. 3 DB tables (`topic_profiles`, `sources`, `workspace_source_subscriptions`), URL canonicalization + redirect resolver in `@postdash/sources` (34 tests), 8 commands (`create/update/delete/list` × topics+sources, 19 tests), 8 REST endpoints (12 route tests), 3 Mini App screens (Settings/Sources/AddSource). Total workspace tests: 365+ (sources 34 + commands 55 + miniapp 109 + api 95 + others). Architecture: `architecture/topics-and-sources.md`.
 
 - 2026-05-15: Phase 2 (Channel Connection) closed and tagged `phase-2-perfect`. 3 DB tables (`content_channels`, `channel_connections`, `channel_connect_codes`), 2 commands (`create-connect-code`, `connect-telegram-channel`), Telegram channel adapter (`packages/channel-adapters/src/telegram/`), 4-state Mini App `ChannelScreen`, `buildConnectDeepLink` in shared. Total workspace: 306 tests.
 
