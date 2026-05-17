@@ -52,6 +52,7 @@ export function isFormDirty(
   if (!loaded) {
     return (
       state.name.trim().length > 0 ||
+      state.language !== EMPTY_SETTINGS_FORM.language ||
       state.mainTopics.trim().length > 0 ||
       state.keywords.trim().length > 0 ||
       state.negativeKeywords.trim().length > 0

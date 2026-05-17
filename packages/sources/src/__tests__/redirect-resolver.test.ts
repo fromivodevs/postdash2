@@ -234,6 +234,24 @@ describe('resolveRedirect: SSRF defence', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it.each([
+    // Bare-IPv6 NAT64 prefix — these forms could only reach a private IPv4 on
+    // a NAT64-capable network, but we conservatively block the /96 to deny the
+    // attack surface entirely. (Security audit round 7 hardening.)
+    ['http://[64:ff9b::7f00:1]/'],
+    ['http://[64:ff9b::a9fe:a9fe]/'],
+  ])('blocks IPv6 NAT64 well-known prefix 64:ff9b::/96: %s', async (url) => {
+    const f = vi.fn();
+    const r = await resolveRedirect(url, {
+      fetch: f,
+      skipSsrfCheck: false,
+      dnsLookup: dnsAllPublic,
+    });
+    expect(r.status).toBe('blocked_private_ip');
+    expect(r.error).toContain('NAT64');
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it('detects DNS rebinding: post-fetch resolve drops the pre-check IP', async () => {
     // T0: dns.lookup returns 93.184.216.34 (public) → check passes
     // T1: fetch runs (200 OK)

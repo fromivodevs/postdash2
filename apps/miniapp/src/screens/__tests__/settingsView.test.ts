@@ -48,6 +48,13 @@ describe('isFormDirty', () => {
     expect(isFormDirty({ ...EMPTY_SETTINGS_FORM, negativeKeywords: 'spam' }, null)).toBe(true);
   });
 
+  it('language change away from default with no loaded profile = dirty', () => {
+    // Regression: a user creating a new profile who picks language='en'
+    // without entering any text would have escaped the closingConfirmation
+    // prompt and silently lost their language selection (ux-critic r7).
+    expect(isFormDirty({ ...EMPTY_SETTINGS_FORM, language: 'en' }, null)).toBe(true);
+  });
+
   it('form matching the loaded profile = not dirty', () => {
     expect(isFormDirty(projectionToFormState(PROFILE), PROFILE)).toBe(false);
   });

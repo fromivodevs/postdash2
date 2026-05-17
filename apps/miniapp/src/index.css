@@ -219,3 +219,15 @@ a {
   opacity: 1;
   background: var(--tg-theme-button-color, var(--color-link-fallback));
 }
+
+/*
+ * Tap-target enforcement for compact row action buttons (§8 — Apple HIG 44x44).
+ * The telegram-ui Button size="s" variant defaults to a smaller height; this
+ * rule reasserts the 44px floor on action rows where two compact buttons sit
+ * side by side (SourceCell). Without this floor the buttons can render below
+ * the accessibility minimum on touch devices. (UX r7 hardening.)
+ */
+.source-cell__actions button {
+  min-height: var(--touch-target-min);
+  min-width: var(--touch-target-min);
+}

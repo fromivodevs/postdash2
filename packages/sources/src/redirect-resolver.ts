@@ -104,6 +104,15 @@ function isBlockedIpv6(ipString: string): { blocked: boolean; reason?: string } 
   if (lower === '::1' || lower === '::') {
     return { blocked: true, reason: `IPv6 ${lower}` };
   }
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052). On a NAT64-capable
+  // network the kernel translates the last 32 bits to an IPv4 address — an
+  // attacker controlling DNS could return 64:ff9b::7f00:1 to reach 127.0.0.1
+  // bypassing IPv4 checks. Block the whole /96 conservatively; the embedded
+  // IPv4 is unreachable from a non-NAT64 host so a legitimate web service
+  // never lives at this prefix.
+  if (/^64:ff9b:/.test(lower)) {
+    return { blocked: true, reason: 'IPv6 NAT64 well-known 64:ff9b::/96' };
+  }
   // Unique-local fc00::/7 → first byte 0xfc or 0xfd.
   if (/^f[cd][0-9a-f]{0,2}:/.test(lower)) return { blocked: true, reason: 'IPv6 ULA fc00::/7' };
   // Link-local fe80::/10.
