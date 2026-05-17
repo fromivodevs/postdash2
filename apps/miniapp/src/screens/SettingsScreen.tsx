@@ -20,10 +20,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { getWebApp } from '../telegram/webapp.ts';
 import {
+  isFormDirty,
+  projectionToFormState,
+  validateSettingsForm,
+} from './settingsView.ts';
+import {
   Button,
   ErrorState,
   FieldError,
-  Placeholder,
   Section,
   Spinner,
   useSnackbar,
@@ -67,35 +71,21 @@ export function SettingsScreen(): ReactNode {
 
   useEffect(() => {
     if (existing) {
-      setName(existing.name);
-      setLanguage(existing.language);
-      setMainTopics(existing.main_topics.join(', '));
-      setKeywords(existing.keywords.join(', '));
-      setNegativeKeywords(existing.negative_keywords.join(', '));
+      const next = projectionToFormState(existing);
+      setName(next.name);
+      setLanguage(next.language);
+      setMainTopics(next.mainTopics);
+      setKeywords(next.keywords);
+      setNegativeKeywords(next.negativeKeywords);
     }
   }, [existing]);
 
   // §13: form has unsaved changes → ask Telegram to confirm before close.
-  // Dirty detection compares the form snapshot against what was loaded from
-  // the server (empty strings when no profile exists yet). Effect runs on
-  // every state change but the WebApp API itself dedups.
-  const isDirty = useMemo(() => {
-    if (!existing) {
-      return (
-        name.trim().length > 0 ||
-        mainTopics.trim().length > 0 ||
-        keywords.trim().length > 0 ||
-        negativeKeywords.trim().length > 0
-      );
-    }
-    return (
-      name !== existing.name ||
-      language !== existing.language ||
-      mainTopics !== existing.main_topics.join(', ') ||
-      keywords !== existing.keywords.join(', ') ||
-      negativeKeywords !== existing.negative_keywords.join(', ')
-    );
-  }, [existing, name, language, mainTopics, keywords, negativeKeywords]);
+  // Pure helper `isFormDirty` is tested in settingsView.test.ts.
+  const isDirty = useMemo(
+    () => isFormDirty({ name, language, mainTopics, keywords, negativeKeywords }, existing),
+    [existing, name, language, mainTopics, keywords, negativeKeywords],
+  );
 
   useEffect(() => {
     const wa = getWebApp();
@@ -124,16 +114,21 @@ export function SettingsScreen(): ReactNode {
   });
 
   const onSave = (): void => {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      // Inline field error per §7 (FieldError tier), not snackbar — snackbars
-      // disappear and don't tell screen readers WHICH field is wrong.
-      setNameError('Укажи название.');
+    const validation = validateSettingsForm({
+      name,
+      language,
+      mainTopics,
+      keywords,
+      negativeKeywords,
+    });
+    if (!validation.ok) {
+      // Inline field error per §7 (FieldError tier).
+      setNameError(validation.nameError);
       return;
     }
     setNameError(null);
     saveMutation.mutate({
-      name: trimmedName,
+      name: name.trim(),
       language,
       main_topics: splitTags(mainTopics),
       keywords: splitTags(keywords),
@@ -175,10 +170,13 @@ export function SettingsScreen(): ReactNode {
   return (
     <Section header="Настройки">
       {!existing && (
-        <Placeholder
-          header="Темы ещё не заданы"
-          description="Опиши, какие новости тебе интересны. Радар будет искать по этим темам."
-        />
+        // §12 actionable empty state: hint sits ABOVE the form so the user
+        // sees both the prompt and the editable fields together. Without a
+        // separate CTA button because the form itself is the action (single-
+        // default UX, the same form serves create + edit).
+        <div className="settings-empty-hint" role="note">
+          Темы ещё не заданы — заполни форму ниже, и радар начнёт работу.
+        </div>
       )}
 
       <div className="settings-form">

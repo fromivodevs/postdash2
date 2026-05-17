@@ -30,29 +30,28 @@ import { z } from 'zod';
 import { canonicalize, resolveRedirect } from '@postdash/sources';
 import type { Source, WorkspaceSourceSubscription } from '@postdash/domain';
 import type { Database, DbOrTx } from '@postdash/db';
-import { operationLog, sources, topicProfiles, workspaceSourceSubscriptions } from '@postdash/db';
+import { sources, topicProfiles, workspaceSourceSubscriptions } from '@postdash/db';
 import { CommandError } from './errors.js';
+import { writeOperationLog, redactUrlForLog } from './operation-log.js';
 import { assertWorkspaceRole } from './policies.js';
 import { rowToSource, rowToSubscription } from './topic-row-mappers.js';
 
 /**
- * Per-command operation_log writer. Phase 1/2 commands honour this rule;
- * Phase 3 originally missed it (caught in step-perfect-loop). Logs the
- * action discriminator and target object id only — no URL, no canonical_url,
- * no API key fragments.
+ * Per-command operation_log writer, wraps the shared writeOperationLog.
+ * Defaults `objectType` to `workspace_source_subscription` since all 3
+ * source-side mutations target a subscription row.
  */
-async function writeSourceOperationLog(
+async function logSourceAction(
   tx: DbOrTx,
   args: { workspaceId: string; userId: string; commandType: string; objectId: string; payload?: Record<string, unknown> },
 ): Promise<void> {
-  await tx.insert(operationLog).values({
+  await writeOperationLog(tx, {
     workspaceId: args.workspaceId,
     userId: args.userId,
     commandType: args.commandType,
     objectType: 'workspace_source_subscription',
     objectId: args.objectId,
     payloadSummary: args.payload ?? {},
-    result: 'success',
   });
 }
 
@@ -144,9 +143,14 @@ export async function createSource(
 
   const canon = canonicalize(resolved.finalUrl);
   if (canon.canonical === null) {
-    throw new CommandError('validation_failed', `unparseable URL after redirect resolution: ${resolved.finalUrl}`, {
-      code: 'unparseable_url',
-    });
+    // Redact: the URL may carry an API key in the query string. The error
+    // message reaches server logs (req.log.warn) and operation_log entries
+    // — keep only scheme+host+path.
+    throw new CommandError(
+      'validation_failed',
+      `unparseable URL after redirect resolution: ${redactUrlForLog(resolved.finalUrl)}`,
+      { code: 'unparseable_url' },
+    );
   }
   // Hoist into a local string variable so TS narrowing survives the
   // db.transaction(async () => { ... }) callback boundary.
@@ -346,7 +350,7 @@ export async function createSource(
       throw new CommandError('internal', 'subscription upsert returned no row');
     }
 
-    await writeSourceOperationLog(tx, {
+    await logSourceAction(tx, {
       workspaceId: data.workspaceId,
       userId: data.userId,
       commandType: 'CreateSource',
@@ -441,7 +445,7 @@ export async function updateSourceSubscription(
       throw new CommandError('internal', `source ${data.sourceId} vanished mid-update`);
     }
 
-    await writeSourceOperationLog(tx, {
+    await logSourceAction(tx, {
       workspaceId: data.workspaceId,
       userId: data.userId,
       commandType: 'UpdateSourceSubscription',
@@ -475,7 +479,7 @@ export async function deleteSourceSubscription(
     await tx
       .delete(workspaceSourceSubscriptions)
       .where(eq(workspaceSourceSubscriptions.id, existing.id));
-    await writeSourceOperationLog(tx, {
+    await logSourceAction(tx, {
       workspaceId: data.workspaceId,
       userId: data.userId,
       commandType: 'DeleteSourceSubscription',

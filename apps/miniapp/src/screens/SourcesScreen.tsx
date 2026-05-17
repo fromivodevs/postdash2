@@ -216,16 +216,33 @@ function SourceCell({ item, onToggle, onDelete, toggling, deleting }: SourceCell
   const fetched = item.source.last_fetched_at
     ? new Date(item.source.last_fetched_at).toLocaleString('ru-RU')
     : 'пока не проверялся';
-  const subtitle = `${item.source.canonical_url} · ${fetched}`;
   return (
     <Cell
-      subtitle={subtitle}
+      subtitle={
+        // Semantic split: URL gets its own element so screen readers
+        // announce it as a distinct field; <time> for the timestamp gives
+        // the AT a structural cue separate from the URL string.
+        <span className="source-cell__subtitle">
+          <span className="source-cell__url" aria-label="URL источника">
+            {item.source.canonical_url}
+          </span>
+          <span aria-hidden="true"> · </span>
+          {item.source.last_fetched_at ? (
+            <time className="source-cell__fetched" dateTime={item.source.last_fetched_at}>
+              {fetched}
+            </time>
+          ) : (
+            <span className="source-cell__fetched">{fetched}</span>
+          )}
+        </span>
+      }
       after={
         <div className="source-cell__actions">
           <Button
             size="s"
             mode={item.enabled ? 'bezeled' : 'plain'}
             disabled={toggling}
+            loading={toggling}
             onClick={() => onToggle(!item.enabled)}
             aria-label={item.enabled ? 'Отключить' : 'Включить'}
           >
@@ -235,6 +252,7 @@ function SourceCell({ item, onToggle, onDelete, toggling, deleting }: SourceCell
             size="s"
             mode="plain"
             disabled={deleting}
+            loading={deleting}
             onClick={onDelete}
             aria-label="Удалить источник"
           >

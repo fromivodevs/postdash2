@@ -67,8 +67,13 @@ export function AddSourceScreen(): ReactNode {
 
   // §4 native chrome: sticky-bottom MainButton is the primary CTA. The
   // in-page "Добавить" Button below stays for non-Telegram dev.
+  //
+  // `visible: !createMutation.isSuccess` hides the button after a successful
+  // submit so the navigate() to /sources doesn't briefly show a re-tappable
+  // MainButton attached to a stale handler — closes a double-tap window
+  // between mutation success and route change.
   useMainButton({
-    visible: true,
+    visible: !createMutation.isSuccess,
     text: 'Добавить',
     onClick: onSubmit,
     loading: createMutation.isPending,

@@ -27,8 +27,9 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { TopicProfile } from '@postdash/domain';
 import type { Database, DbOrTx } from '@postdash/db';
-import { operationLog, topicProfiles } from '@postdash/db';
+import { topicProfiles } from '@postdash/db';
 import { CommandError } from './errors.js';
+import { writeOperationLog } from './operation-log.js';
 import { assertWorkspaceRole } from './policies.js';
 import { rowToTopicProfile } from './topic-row-mappers.js';
 
@@ -51,8 +52,14 @@ function isUniqueViolation(err: unknown): boolean {
  * jsonb parser). Applied alongside Zod schema validation, BEFORE the DB write.
  */
 const MAX_TONE_PROFILE_DEPTH = 8;
-const MAX_TONE_PROFILE_KEYS = 100;
-function validateToneProfileDepth(value: unknown, depth = 0, keyCount = { n: 0 }): void {
+/**
+ * Combined cap on object keys + array elements. The earlier version only
+ * counted object keys, which let a flat array `{x: ["a","a",...]}` pack
+ * ~6000 strings into a 16KB body without tripping the limit. Counting
+ * arrays toward the same budget closes that bypass.
+ */
+const MAX_TONE_PROFILE_NODES = 200;
+function validateToneProfileDepth(value: unknown, depth = 0, nodeCount = { n: 0 }): void {
   if (depth > MAX_TONE_PROFILE_DEPTH) {
     throw new CommandError('validation_failed', 'tone_profile JSON exceeds max depth', {
       code: 'tone_profile_too_deep',
@@ -60,17 +67,25 @@ function validateToneProfileDepth(value: unknown, depth = 0, keyCount = { n: 0 }
   }
   if (value === null || typeof value !== 'object') return;
   if (Array.isArray(value)) {
-    for (const item of value) validateToneProfileDepth(item, depth + 1, keyCount);
+    for (const item of value) {
+      nodeCount.n += 1;
+      if (nodeCount.n > MAX_TONE_PROFILE_NODES) {
+        throw new CommandError('validation_failed', 'tone_profile exceeds max node count', {
+          code: 'tone_profile_too_many_nodes',
+        });
+      }
+      validateToneProfileDepth(item, depth + 1, nodeCount);
+    }
     return;
   }
   for (const [, v] of Object.entries(value as Record<string, unknown>)) {
-    keyCount.n += 1;
-    if (keyCount.n > MAX_TONE_PROFILE_KEYS) {
-      throw new CommandError('validation_failed', 'tone_profile exceeds max key count', {
-        code: 'tone_profile_too_many_keys',
+    nodeCount.n += 1;
+    if (nodeCount.n > MAX_TONE_PROFILE_NODES) {
+      throw new CommandError('validation_failed', 'tone_profile exceeds max node count', {
+        code: 'tone_profile_too_many_nodes',
       });
     }
-    validateToneProfileDepth(v, depth + 1, keyCount);
+    validateToneProfileDepth(v, depth + 1, nodeCount);
   }
 }
 
@@ -195,7 +210,7 @@ async function doCreateTopicProfileWithRetry(
           .returning();
         const row = updated[0];
         if (!row) throw new CommandError('internal', 'topic_profiles update returned no row');
-        await writeOperationLog(tx, data, row.id, 'update');
+        await logTopicProfileAction(tx, data, row.id, 'update');
         return { profile: rowToTopicProfile(row), created: false };
       }
 
@@ -214,7 +229,7 @@ async function doCreateTopicProfileWithRetry(
         .returning();
       const row = inserted[0];
       if (!row) throw new CommandError('internal', 'topic_profiles insert returned no row');
-      await writeOperationLog(tx, data, row.id, 'create');
+      await logTopicProfileAction(tx, data, row.id, 'create');
       return { profile: rowToTopicProfile(row), created: true };
     });
   } catch (err) {
@@ -228,23 +243,25 @@ async function doCreateTopicProfileWithRetry(
   }
 }
 
-async function writeOperationLog(
+async function logTopicProfileAction(
   tx: DbOrTx,
   data: { workspaceId: string; userId: string },
   topicId: string,
   action: 'create' | 'update' | 'delete',
 ): Promise<void> {
-  // Per 02-ARCHITECTURE.md Rule 6: every command writes operation_log. Phase
-  // 1/2 commands honour this; Phase 3 originally missed it (caught in
-  // step-perfect-loop). payload_summary keeps zero PII — just the discriminator.
-  await tx.insert(operationLog).values({
+  // Per 02-ARCHITECTURE.md Rule 6, via the shared helper.
+  await writeOperationLog(tx, {
     workspaceId: data.workspaceId,
     userId: data.userId,
-    commandType: action === 'create' ? 'CreateTopicProfile' : action === 'update' ? 'UpdateTopicProfile' : 'DeleteTopicProfile',
+    commandType:
+      action === 'create'
+        ? 'CreateTopicProfile'
+        : action === 'update'
+          ? 'UpdateTopicProfile'
+          : 'DeleteTopicProfile',
     objectType: 'topic_profile',
     objectId: topicId,
     payloadSummary: { action },
-    result: 'success',
   });
 }
 
@@ -305,7 +322,7 @@ export async function updateTopicProfile(
       .returning();
     const row = updated[0];
     if (!row) throw new CommandError('internal', 'topic_profiles update returned no row');
-    await writeOperationLog(tx, data, row.id, 'update');
+    await logTopicProfileAction(tx, data, row.id, 'update');
     return rowToTopicProfile(row);
   });
 }
@@ -335,7 +352,7 @@ export async function deleteTopicProfile(
       .update(topicProfiles)
       .set({ status: 'disabled', updatedAt: new Date() })
       .where(eq(topicProfiles.id, existing.id));
-    await writeOperationLog(tx, data, existing.id, 'delete');
+    await logTopicProfileAction(tx, data, existing.id, 'delete');
   });
 }
 
