@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeComposite } from '../handlers/score-workspace-match.js';
+import { computeComposite, truncateAiUsageError } from '../handlers/score-workspace-match.js';
 
 describe('computeComposite (score weights)', () => {
   it('produces weighted average per §3 (50/30/10/10)', () => {
@@ -72,5 +72,17 @@ describe('computeComposite (score weights)', () => {
     expect(oneDay.freshness).toBeGreaterThan(oneWeek.freshness);
     // 24h → e^-1 ≈ 0.367 → ~3.67
     expect(oneDay.freshness).toBeCloseTo(Math.exp(-1) * 10, 1);
+  });
+});
+
+describe('truncateAiUsageError', () => {
+  it('keeps ai_usage_events.error_message within the DB CHECK cap', () => {
+    const out = truncateAiUsageError('x'.repeat(600));
+    expect(out).toHaveLength(500);
+  });
+
+  it('preserves nullish values', () => {
+    expect(truncateAiUsageError(null)).toBeNull();
+    expect(truncateAiUsageError(undefined)).toBeNull();
   });
 });

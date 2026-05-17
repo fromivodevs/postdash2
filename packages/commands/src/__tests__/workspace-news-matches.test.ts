@@ -4,9 +4,34 @@ import {
   SuppressWorkspaceNewsMatchInputSchema,
   UpsertWorkspaceNewsMatchInputSchema,
   WORKSPACE_NEWS_MATCH_STATUSES,
+  upsertWorkspaceNewsMatch,
 } from '../workspace-news-matches.js';
+import { makeMockDb } from './_mock-db.js';
 
 const UUID = '00000000-0000-0000-0000-000000000001';
+const NEWS = '00000000-0000-0000-0000-000000000002';
+const CLUSTER = '00000000-0000-0000-0000-000000000003';
+const MATCH = '00000000-0000-0000-0000-000000000004';
+const CLUSTER_MATCH = '00000000-0000-0000-0000-000000000005';
+
+function upsertInput(overrides: Partial<Parameters<typeof upsertWorkspaceNewsMatch>[1]> = {}) {
+  return {
+    workspaceId: UUID,
+    newsItemId: NEWS,
+    clusterId: CLUSTER,
+    score: 7.5,
+    relevanceReason: 'good match',
+    shouldCreateDraft: true,
+    riskFlags: [],
+    scoreComponents: { llm: 8, cosine: 0.9, freshness: 0.7, reliability: 0.6, weighted: 7.5 },
+    aiProvider: 'yandex-deepseek',
+    usedModel: 'yandex-deepseek-v3.2',
+    promptVersion: 'yandex-deepseek-score@v1.0',
+    status: 'candidate' as const,
+    scoredAt: new Date('2026-05-17T00:00:00Z'),
+    ...overrides,
+  };
+}
 
 describe('WORKSPACE_NEWS_MATCH_STATUSES', () => {
   it('mirrors the migration CHECK constraint exactly', () => {
@@ -130,5 +155,49 @@ describe('ListRadarMatchesInputSchema', () => {
     });
     expect(r.minScore).toBe(5);
     expect(r.maxScore).toBe(9.5);
+  });
+});
+
+describe('upsertWorkspaceNewsMatch', () => {
+  it('locks both item and cluster when cluster_id is known, then inserts', async () => {
+    const mock = makeMockDb({
+      selectResults: [[], []],
+      insertResults: [[{ id: MATCH }]],
+    });
+
+    const result = await upsertWorkspaceNewsMatch(mock.db, upsertInput());
+
+    expect(result).toStrictEqual({ id: MATCH, inserted: true });
+    expect(mock.executeCount).toBe(2);
+    expect(mock.selectCount).toBe(2);
+    expect(mock.insertCount).toBe(1);
+  });
+
+  it('returns the existing cluster row without inserting a duplicate cluster match', async () => {
+    const mock = makeMockDb({
+      selectResults: [[], [{ id: CLUSTER_MATCH }]],
+    });
+
+    const result = await upsertWorkspaceNewsMatch(mock.db, upsertInput());
+
+    expect(result).toStrictEqual({ id: CLUSTER_MATCH, inserted: false });
+    expect(mock.executeCount).toBe(2);
+    expect(mock.selectCount).toBe(2);
+    expect(mock.insertCount).toBe(0);
+    expect(mock.updateCount).toBe(0);
+  });
+
+  it('hides a stale item row when a canonical cluster row already exists', async () => {
+    const mock = makeMockDb({
+      selectResults: [[{ id: MATCH }], [{ id: CLUSTER_MATCH }]],
+    });
+
+    const result = await upsertWorkspaceNewsMatch(mock.db, upsertInput());
+
+    expect(result).toStrictEqual({ id: CLUSTER_MATCH, inserted: false });
+    expect(mock.executeCount).toBe(2);
+    expect(mock.selectCount).toBe(2);
+    expect(mock.insertCount).toBe(0);
+    expect(mock.updateCount).toBe(1);
   });
 });

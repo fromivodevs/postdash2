@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { matchNegativeKeyword, __testables } from '../handlers/match-news-to-workspaces.js';
 import { buildTopicText } from '../handlers/recompute-topic-embedding.js';
 
-const { cosineSim, parseEmbedding } = __testables;
+const { cosineSim, parseEmbedding, fanoutFailure } = __testables;
 
 describe('matchNegativeKeyword', () => {
   it('whole-word matches case-insensitively', () => {
@@ -90,6 +90,23 @@ describe('parseEmbedding', () => {
   });
   it('rejects non-finite numbers', () => {
     expect(() => parseEmbedding('[1,NaN,3]')).toThrow(/non-finite/);
+  });
+});
+
+describe('fanoutFailure', () => {
+  it('marks mixed per-workspace failures as transient so the task retries', () => {
+    const err = fanoutFailure([{ workspaceId: 'workspace-a', err: new Error('db timeout') }], 3);
+    expect(err).toMatchObject({
+      kind: 'transient',
+      message: 'match_news_to_workspaces failed for 1/3 workspace(s)',
+    });
+  });
+
+  it('marks all-permanent per-workspace failures as permanent', () => {
+    const permanent = new Error('bad embedding') as Error & { kind?: string };
+    permanent.kind = 'permanent';
+    const err = fanoutFailure([{ workspaceId: 'workspace-a', err: permanent }], 1);
+    expect(err).toMatchObject({ kind: 'permanent' });
   });
 });
 

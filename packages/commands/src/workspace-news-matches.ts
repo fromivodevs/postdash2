@@ -91,7 +91,9 @@ export interface UpsertResult {
  * Concurrency model:
  *   1. Acquire `pg_advisory_xact_lock(hashtext(workspace_id), hashtext(
  *      news_item_id))` — two concurrent matchers for the same (workspace,
- *      item) serialize on this lock. Released automatically at tx end.
+ *      item) serialize on this lock. If `cluster_id` is known, a second
+ *      `(workspace, cluster)` lock serializes cluster-level dedup too.
+ *      Released automatically at tx end.
  *   2. `SELECT ... FOR UPDATE` the existing row, if any. The advisory lock
  *      guarantees no second tx is in flight, so the FOR UPDATE is a safety
  *      belt rather than a primary serialization mechanism.
@@ -139,8 +141,13 @@ export async function upsertWorkspaceNewsMatch(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${data.workspaceId}), hashtext(${data.newsItemId}))`,
     );
+    if (data.clusterId !== null) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${data.workspaceId}), hashtext(${data.clusterId}))`,
+      );
+    }
 
-    const existing = await tx
+    const existingByItem = await tx
       .select({
         id: workspaceNewsMatches.id,
       })
@@ -153,8 +160,42 @@ export async function upsertWorkspaceNewsMatch(
       )
       .for('update')
       .limit(1);
+    const itemRow = existingByItem[0];
 
-    if (existing[0]) {
+    if (data.clusterId !== null) {
+      const existingByCluster = await tx
+        .select({
+          id: workspaceNewsMatches.id,
+        })
+        .from(workspaceNewsMatches)
+        .where(
+          and(
+            eq(workspaceNewsMatches.workspaceId, data.workspaceId),
+            eq(workspaceNewsMatches.clusterId, data.clusterId),
+          ),
+        )
+        .for('update')
+        .limit(1);
+      const clusterRow = existingByCluster[0];
+      if (clusterRow && clusterRow.id !== itemRow?.id) {
+        if (itemRow) {
+          await tx
+            .update(workspaceNewsMatches)
+            .set({
+              score: null,
+              relevanceReason: 'Cluster duplicate; canonical match already exists',
+              shouldCreateDraft: false,
+              riskFlags: Array.from(new Set([...data.riskFlags, 'cluster_duplicate'])),
+              status: 'hidden',
+              updatedAt: new Date(),
+            })
+            .where(eq(workspaceNewsMatches.id, itemRow.id));
+        }
+        return { id: clusterRow.id, inserted: false };
+      }
+    }
+
+    if (itemRow) {
       const updated = await tx
         .update(workspaceNewsMatches)
         .set({
@@ -171,7 +212,7 @@ export async function upsertWorkspaceNewsMatch(
           scoredAt: data.scoredAt,
           updatedAt: new Date(),
         })
-        .where(eq(workspaceNewsMatches.id, existing[0].id))
+        .where(eq(workspaceNewsMatches.id, itemRow.id))
         .returning({ id: workspaceNewsMatches.id });
       const row = updated[0];
       if (!row) {

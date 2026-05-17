@@ -27,6 +27,8 @@ export interface MockDbScript {
   selectResults?: MockResult[];
   /** Outcomes of successive `update(...)....returning()` chains (rowset or throw). */
   updateResults?: MockResult[];
+  /** Outcomes of successive `execute(...)` calls (rowset or throw). */
+  executeResults?: MockResult[];
 }
 
 export interface MockDb {
@@ -37,6 +39,7 @@ export interface MockDb {
   selectCount: number;
   updateCount: number;
   deleteCount: number;
+  executeCount: number;
 }
 
 export function makeMockDb(script: MockDbScript = {}): MockDb {
@@ -46,10 +49,12 @@ export function makeMockDb(script: MockDbScript = {}): MockDb {
     selectCount: 0,
     updateCount: 0,
     deleteCount: 0,
+    executeCount: 0,
   };
   const insertResults = script.insertResults ?? [];
   const selectResults = script.selectResults ?? [];
   const updateResults = script.updateResults ?? [];
+  const executeResults = script.executeResults ?? [];
 
   // A scripted outcome resolves to a rowset, or — if the script entry is an
   // `Error` — throws it, simulating a DB-level failure mid-chain.
@@ -116,6 +121,12 @@ export function makeMockDb(script: MockDbScript = {}): MockDb {
       state.deleteCount += 1;
       return makeChain(() => []);
     },
+    execute: async () => {
+      state.calls.push('execute');
+      const idx = state.executeCount;
+      state.executeCount += 1;
+      return settle(executeResults[idx]);
+    },
     transaction: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => {
       state.calls.push('transaction');
       return work(handle);
@@ -138,6 +149,9 @@ export function makeMockDb(script: MockDbScript = {}): MockDb {
     },
     get deleteCount() {
       return state.deleteCount;
+    },
+    get executeCount() {
+      return state.executeCount;
     },
   };
 }

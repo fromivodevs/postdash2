@@ -141,17 +141,16 @@ export const matchNewsToWorkspacesHandler: TaskHandler = async (task, ctx) => {
     return;
   }
 
-  // Per-workspace decisions. Each is independent: a failure for one workspace
-  // does NOT abort the rest (we let the handler succeed and rely on partial
-  // unique to suppress redundant re-fires).
+  // Per-workspace decisions. We keep processing after a per-workspace failure
+  // so one bad target does not block the rest, but we rethrow after the loop
+  // if anything failed. The task retry then replays only unfinished work:
+  // already-written workspace_news_matches rows and active score tasks are
+  // suppressed by the partial UNIQUE guards.
+  const failures: Array<{ workspaceId: string; err: unknown }> = [];
   for (const topic of targetsRaw) {
     try {
       await matchOneWorkspace(item, topic, ctx, itemEmbedding);
     } catch (err) {
-      // Soft-isolate: log and continue. A retry of the whole task would re-
-      // process every workspace, most of which are already DONE (dedup via
-      // partial UNIQUE on workspace_news_matches). The per-workspace try/catch
-      // narrows the blast radius without burning the entire task.
       ctx.logger.warn(
         {
           err,
@@ -160,7 +159,11 @@ export const matchNewsToWorkspacesHandler: TaskHandler = async (task, ctx) => {
         },
         'match_news_to_workspaces per-workspace failure',
       );
+      failures.push({ workspaceId: topic.workspaceId, err });
     }
+  }
+  if (failures.length > 0) {
+    throw fanoutFailure(failures, targetsRaw.length);
   }
 };
 
@@ -400,11 +403,30 @@ export function matchNegativeKeyword(haystack: string, keywords: readonly string
   return null;
 }
 
-export const __testables = { cosineSim, parseEmbedding };
+export const __testables = { cosineSim, parseEmbedding, fanoutFailure };
 
 function permanent(message: string): Error {
   const e: Error & { kind?: string } = new Error(message);
   e.kind = 'permanent';
+  return e;
+}
+
+function fanoutFailure(
+  failures: Array<{ workspaceId: string; err: unknown }>,
+  total: number,
+): Error {
+  const e: Error & { kind?: string; details?: unknown } = new Error(
+    `match_news_to_workspaces failed for ${failures.length}/${total} workspace(s)`,
+  );
+  e.kind = failures.every((f) => {
+    return f.err && typeof f.err === 'object' && (f.err as { kind?: unknown }).kind === 'permanent';
+  })
+    ? 'permanent'
+    : 'transient';
+  e.details = failures.map((f) => ({
+    workspaceId: f.workspaceId,
+    message: f.err instanceof Error ? f.err.message : String(f.err),
+  }));
   return e;
 }
 

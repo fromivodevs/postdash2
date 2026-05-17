@@ -447,11 +447,16 @@ async function writeAiUsage(ctx: Parameters<TaskHandler>[1], row: AiUsageRow): P
       promptVersion: row.promptVersion,
       durationMs: row.durationMs,
       status: row.status,
-      errorMessage: row.errorMessage ?? null,
+      errorMessage: truncateAiUsageError(row.errorMessage),
     });
   } catch (err) {
     ctx.logger.warn({ err }, 'ai_usage_events write failed (non-fatal)');
   }
+}
+
+export function truncateAiUsageError(message: string | null | undefined): string | null {
+  if (message === null || message === undefined) return null;
+  return message.length > 500 ? message.slice(0, 500) : message;
 }
 
 function permanent(message: string): Error {
