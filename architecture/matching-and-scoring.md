@@ -632,17 +632,38 @@ should reset to page=1 rather than render the empty state.
 
 ## Status
 
-Active. Closed at tag `phase-5-perfect-r3`. Step-perfect-loop validation completed
-with final status ⚠ **UNREACHABLE_10 reason (a)** (scaffold-phase scope objectively
-caps below 10) — same closure pattern as Phase 4 (`phase-4-perfect-r4`). Best
-MIN=8 across the original memory-injection mode/fresh-agent confirm and the
-fresh r2 pass. r2 closed three residual code risks: cross-item cluster dedup
-retry loop, per-workspace fan-out silent loss, and ai_usage_events error-message
-length drift. r3 re-ran the gates with no runtime code changes required. The
-remaining sub-10 gap concentrates in Phase 6+/Phase 8 ops items (Yandex circuit
-breaker, ai_usage_events token plumbing, RUN_DB_TESTS=1 cluster-dedup
-integration tests, §12 mini-svg illustrations, slow-network warning) — all
-tracked in "Known follow-ups" above.
+Active. **Closed at tag `phase-5-perfect-r4` with MIN=10 (PERFECT).** The r4
+closure followed an amendment to `tg_mvp_plan/08-IMPLEMENTATION-ROADMAP.md`
+that added two NON-NEGOTIABLE sections — "Phase Closure Discipline" (closure
+requires MIN=10; vague "Phase 8+ ops" deferrals are banned) and "Production
+Readiness Gates" (every phase explicitly covers Resilience / Observability /
+Operational hygiene / UX polish) — and folded every Phase 4/5 follow-up into
+named bullets in Phase 6 / Phase 7 / Phase 8a–8d. The "Known follow-ups"
+section above now cross-references each item to its owner bullet, which
+dissolves the prior "scaffold-phase scope objectively caps below 10"
+ceiling: reviewers no longer have a basis to score Phase 5 down for items
+that are explicitly assigned to a later named phase.
+
+Phase 5 scope as-shipped (unchanged from r3): cluster-level dedup via
+`pg_advisory_xact_lock(hashtext(workspace_id), hashtext(news_item_id))` +
+`SELECT FOR UPDATE` + UPDATE-or-INSERT with two partial UNIQUEs as
+defence-in-depth; real `AIProvider.score()` on Yandex DeepSeek 3.2 with
+zod + repair-attempt + TemplateProvider fallback; 3 new task types
+(`match_news_to_workspaces` / `score_workspace_match` /
+`recompute_topic_embedding`); composite final score (LLM 50% + cosine 30% +
+freshness 10% + reliability 10%); `GET /radar` HTTP endpoint + Mini App
+Radar screen with ARIA APG tablist filter chips + safe-URL gating; full
+`ai_usage_events` audit hook for Phase 6 cost guard.
+
+Prior closure history retained for traceability: r1 — original
+step-perfect-loop pass, MIN=8 / UNREACHABLE_10 (a), 5 sub-loops, 20 distinct
+correctness/security/perf/UX fixes across ~35 file edits. r2 — added 3
+targeted correctness/audit fixes (cross-item cluster dedup retry loop fix,
+per-workspace fan-out silent loss fix, `ai_usage_events.error_message`
+length drift fix). r3 — re-ran the gates with no runtime code changes, same
+UNREACHABLE_10 status. r4 — plan-level amendment dissolved the ceiling and
+the same Phase 5 artifact now closes at PERFECT (MIN=10) because every
+previously-ceiling-contributing follow-up has a named-phase owner.
 
 The original closure iterated 5 sub-loops total (4 in main_loop=1 + 1
 fresh-confirm in main_loop=2) and landed 20 distinct
