@@ -100,6 +100,9 @@ const MATCH_ROW = {
   sourceName: 'Example',
   sourceCanonicalUrl: 'https://example.com/feed',
   clusterSourcesCount: 3,
+  // listRadarMatches now reads the filtered total via `count(*) OVER ()`
+  // in the same SELECT, so each row carries the `total` column.
+  total: 1,
 };
 
 let app: FastifyInstance | undefined;
@@ -118,10 +121,10 @@ describe('GET /radar', () => {
         [IDENTITY_ROW],
         [USER_ROW],
         [MEMBER_JOIN_ROW],
-        // listRadarMatches tx
+        // listRadarMatches tx — single SELECT now (count(*) OVER () merged
+        // into the row projection); no separate count statement.
         [VIEWER_MEMBERSHIP_ROW],
-        [{ c: 1 }], // count
-        [MATCH_ROW], // page rows
+        [MATCH_ROW], // page rows (each row carries `total` via window func)
       ],
     });
     app = await buildApp(withTestEnv({ TELEGRAM_BOT_TOKEN: BOT_TOKEN }), { pool: fake.pool });
@@ -180,7 +183,7 @@ describe('GET /radar', () => {
         [USER_ROW],
         [MEMBER_JOIN_ROW],
         [VIEWER_MEMBERSHIP_ROW],
-        [{ c: 0 }],
+        // single SELECT — empty page → no rows → total=0
         [],
       ],
     });

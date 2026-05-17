@@ -65,6 +65,7 @@ interface TopicRow {
   negativeKeywords: string[];
   embedding: number[] | string | null;
   embeddingStatus: string;
+  embeddingUpdatedAt: Date | null;
 }
 
 export const matchNewsToWorkspacesHandler: TaskHandler = async (task, ctx) => {
@@ -111,12 +112,13 @@ export const matchNewsToWorkspacesHandler: TaskHandler = async (task, ctx) => {
   // guarantees ≤1).
   const targetsRaw = (await ctx.client`
     SELECT
-      tp.id                AS "id",
-      tp.workspace_id      AS "workspaceId",
-      tp.language          AS "language",
-      tp.negative_keywords AS "negativeKeywords",
-      tp.embedding         AS "embedding",
-      tp.embedding_status  AS "embeddingStatus"
+      tp.id                     AS "id",
+      tp.workspace_id           AS "workspaceId",
+      tp.language               AS "language",
+      tp.negative_keywords      AS "negativeKeywords",
+      tp.embedding              AS "embedding",
+      tp.embedding_status       AS "embeddingStatus",
+      tp.embedding_updated_at   AS "embeddingUpdatedAt"
     FROM workspace_source_subscriptions wss
     JOIN topic_profiles tp ON tp.id = COALESCE(
       wss.topic_profile_id,
@@ -277,6 +279,12 @@ async function matchOneWorkspace(
   // (`tasks_unique_active_score_per_workspace_item`) makes the enqueue
   // idempotent: concurrent fan-out runs for the same (workspace, item)
   // collapse via ON CONFLICT DO NOTHING.
+  //
+  // `topic_embedding_updated_at_iso` is a snapshot of the topic's embedding
+  // freshness AT enqueue time. The score handler re-reads the topic and
+  // drops the cosine component if the snapshot doesn't match — the topic was
+  // re-embedded between enqueue and dequeue and the cosine value is stale.
+  // See score-workspace-match.ts for the freshness check.
   await ctx.enqueue({
     type: 'score_workspace_match',
     workspaceId: topic.workspaceId,
@@ -285,6 +293,9 @@ async function matchOneWorkspace(
       // Pass the cosine through so the scoring handler can compose the
       // composite without re-running the SQL distance query.
       cosine_pre_score: cosineSimilarity,
+      topic_embedding_updated_at_iso: topic.embeddingUpdatedAt
+        ? topic.embeddingUpdatedAt.toISOString()
+        : null,
     },
   });
 }
@@ -343,17 +354,47 @@ function cosineSim(a: number[], b: number[]): number {
  * keyword, or null if none hit. Escapes regex metacharacters in user-supplied
  * keywords so a stray `.` or `(` from the topic profile doesn't blow up.
  *
- * "Whole word" uses `\b` boundaries — `crypto` does not match in `cryptocoin`.
+ * "Whole word" uses Unicode-aware lookarounds (`\p{L}`/`\p{N}` with `/u`),
+ * not ASCII `\b`. PostDash is Russian-first: with `\b` the keyword 'крипто'
+ * fails to whole-word-match 'криптовалюта' because there is no ASCII boundary
+ * between two Cyrillic letters — the regex either matches everywhere or
+ * nowhere. The lookaround form correctly treats any Unicode letter or digit
+ * on either side as "still inside a word". Requires Node >= 18 for the `u`
+ * flag with Unicode property escapes (we run Node 22 per .nvmrc).
+ *
+ * Pre-processing:
+ *   1. Normalize haystack + keyword to NFC so e.g. `café` (NFD: `cafe` + ́)
+ *      matches the keyword `café` (NFC: single codepoint).
+ *   2. Strip Unicode format characters (`\p{Cf}`, includes ZWJ / ZWNJ /
+ *      directional marks) — without this, `крипто<ZWJ>рулит` would slip past
+ *      the lookaround as a word break because ZWJ is neither letter nor digit.
+ *   3. Lowercase via `toLocaleLowerCase('ru-RU')` instead of locale-
+ *      independent `toLowerCase()`. ru-RU is correct for both Cyrillic and
+ *      Latin (does NOT trigger the Turkish dotless-i collation).
+ *
  * MVP rule per §12.2.
  */
 export function matchNegativeKeyword(haystack: string, keywords: readonly string[]): string | null {
   if (keywords.length === 0) return null;
-  const hayLower = haystack.toLowerCase();
+  const hayLower = haystack
+    .normalize('NFC')
+    .replace(/\p{Cf}/gu, '')
+    .toLocaleLowerCase('ru-RU');
   for (const kw of keywords) {
     const k = kw.trim();
     if (k.length === 0) continue;
-    const escaped = k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`\\b${escaped}\\b`, 'i');
+    const normalized = k
+      .normalize('NFC')
+      .replace(/\p{Cf}/gu, '')
+      .toLocaleLowerCase('ru-RU');
+    // After stripping \p{Cf}, a keyword that consisted ONLY of invisible
+    // format chars (e.g. a stray ZWJ saved by the UI) becomes the empty
+    // string. The lookaround regex `(?<![\p{L}\p{N}])(?![\p{L}\p{N}])` would
+    // then match every non-letter boundary in the haystack — i.e. ALL news
+    // items would be flagged filtered_negative for that workspace. Skip.
+    if (normalized.length === 0) continue;
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
     if (re.test(hayLower)) return kw;
   }
   return null;

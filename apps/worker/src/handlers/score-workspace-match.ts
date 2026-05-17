@@ -41,6 +41,13 @@ import type { TaskHandler } from '../dispatcher.js';
 const PayloadSchema = z.object({
   news_item_id: z.string().uuid(),
   cosine_pre_score: z.number().nullable().optional(),
+  // ISO timestamp snapshot of topic_profiles.embedding_updated_at AT enqueue
+  // time. The score handler compares this with the current topic row and
+  // drops the cosine component if it doesn't match — the topic was
+  // re-embedded between enqueue and dequeue so cosine_pre_score is stale.
+  // Optional + nullable for backwards compatibility with payloads enqueued
+  // before this field was added.
+  topic_embedding_updated_at_iso: z.string().nullable().optional(),
 });
 
 interface NewsRow {
@@ -63,6 +70,7 @@ interface TopicRow {
   keywords: string[];
   negativeKeywords: string[];
   toneProfile: unknown;
+  embeddingUpdatedAt: Date | null;
 }
 
 export const scoreWorkspaceMatchHandler: TaskHandler = async (task, ctx) => {
@@ -110,6 +118,7 @@ export const scoreWorkspaceMatchHandler: TaskHandler = async (task, ctx) => {
       keywords: topicProfiles.keywords,
       negativeKeywords: topicProfiles.negativeKeywords,
       toneProfile: topicProfiles.toneProfile,
+      embeddingUpdatedAt: topicProfiles.embeddingUpdatedAt,
     })
     .from(topicProfiles)
     .where(
@@ -227,12 +236,27 @@ export const scoreWorkspaceMatchHandler: TaskHandler = async (task, ctx) => {
     }
   }
 
+  // Stale-cosine check: the matcher snapshotted topic.embedding_updated_at AT
+  // enqueue time and passed it in the payload. If the topic's current
+  // embedding_updated_at doesn't match, the topic was re-embedded between
+  // enqueue and dequeue and `cosine_pre_score` no longer reflects the current
+  // topic vector. Drop the cosine component (degrade to LLM-only composite)
+  // rather than scoring against a stale value, and surface the decision via
+  // a risk_flag so observability is clear. Backwards-compat: if the payload
+  // didn't carry a snapshot (legacy enqueue → field `undefined`), skip the
+  // check and trust the value.
+  const snapshotIso = payload.topic_embedding_updated_at_iso;
+  const currentIso = topic.embeddingUpdatedAt ? topic.embeddingUpdatedAt.toISOString() : null;
+  const cosineIsStale = snapshotIso !== undefined && snapshotIso !== currentIso;
+  const cosineForComposite = cosineIsStale ? null : (payload.cosine_pre_score ?? null);
+  const staleCosineFlag: readonly string[] = cosineIsStale ? ['stale_cosine_dropped'] : [];
+
   // Composite score: §3. The LLM head is in 0..10; cosine_pre_score from the
   // matcher is in [-1..1] (we normalise to 0..10 via *5+5 then clamp); freshness
   // is exp(-hours/24) → multiplied by 10; reliability is in 0..1 → *10.
   const components = computeComposite({
     llm: scoreOutput.score,
-    cosineRaw: payload.cosine_pre_score ?? null,
+    cosineRaw: cosineForComposite,
     publishedAt: news.publishedAt,
     reliabilityRaw: source.reliabilityScore === null ? null : Number(source.reliabilityScore),
   });
@@ -251,10 +275,13 @@ export const scoreWorkspaceMatchHandler: TaskHandler = async (task, ctx) => {
     score: round2(finalScore),
     relevanceReason: scoreOutput.relevance_reason,
     shouldCreateDraft: scoreOutput.should_create_draft && status === 'candidate',
-    riskFlags:
-      aiUsageStatus === 'fallback'
-        ? Array.from(new Set([...scoreOutput.risk_flags, 'fallback']))
-        : scoreOutput.risk_flags,
+    riskFlags: Array.from(
+      new Set([
+        ...scoreOutput.risk_flags,
+        ...(aiUsageStatus === 'fallback' ? ['fallback'] : []),
+        ...staleCosineFlag,
+      ]),
+    ),
     scoreComponents: components as unknown as Record<string, number>,
     aiProvider: aiUsedProvider.name,
     usedModel: scoreOutput.used_model,

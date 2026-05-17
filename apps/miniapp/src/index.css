@@ -278,6 +278,16 @@ a {
 .radar-card__link:hover {
   text-decoration: underline;
 }
+/* §8 visible focus ring for keyboard nav (pl-ux-critic main_loop=2 blocker). */
+.radar-card__link:focus-visible {
+  outline: 2px solid var(--tg-theme-link-color, var(--color-link-fallback));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.radar-chip:focus-visible {
+  outline: 2px solid var(--tg-theme-link-color, var(--color-link-fallback));
+  outline-offset: 2px;
+}
 .radar-card__subtitle {
   color: var(--tg-theme-hint-color, var(--color-hint-fallback));
   font-size: 0.875em;
@@ -292,6 +302,18 @@ a {
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
+/*
+ * Radar tone tokens. Use Telegram theme vars where the platform exposes a
+ * semantic mapping; warning routes through the canonical --color-warning
+ * token from tokens.css (§2) so a user-set high-contrast theme can override
+ * it in one place instead of per-screen.
+ */
+:root {
+  --radar-tone-positive: var(--tg-theme-button-color, #34c759);
+  --radar-tone-warning: var(--color-warning, #ff9500);
+  --radar-tone-danger: var(--tg-theme-destructive-text-color, #ff3b30);
+  --radar-tone-neutral: var(--tg-theme-hint-color, var(--color-hint-fallback));
+}
 .radar-card__badge {
   display: inline-block;
   padding: 2px var(--space-2);
@@ -300,20 +322,20 @@ a {
   border: 1px solid currentColor;
 }
 .radar-card__badge--positive {
-  color: #178f47;
+  color: var(--radar-tone-positive);
 }
 .radar-card__badge--warning {
-  color: #b35a00;
+  color: var(--radar-tone-warning);
 }
 .radar-card__badge--danger {
-  color: #c8231d;
+  color: var(--radar-tone-danger);
 }
 .radar-card__badge--neutral {
-  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+  color: var(--radar-tone-neutral);
 }
 .radar-card__risk {
   font-size: 0.75em;
-  color: #b35a00;
+  color: var(--radar-tone-warning);
 }
 .radar-card__after {
   display: flex;
@@ -326,14 +348,20 @@ a {
   padding: 0 var(--space-2);
 }
 .radar-card__score--positive {
-  color: #178f47;
+  color: var(--radar-tone-positive);
 }
 .radar-card__score--warning {
-  color: #b35a00;
+  color: var(--radar-tone-warning);
 }
 .radar-card__score--danger {
-  color: #c8231d;
+  color: var(--radar-tone-danger);
 }
 .radar-card__score--neutral {
-  color: var(--tg-theme-hint-color, var(--color-hint-fallback));
+  color: var(--radar-tone-neutral);
+}
+.radar-empty__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
 }

@@ -156,6 +156,20 @@ export const clusterNewsHandler: TaskHandler = async (task, ctx) => {
 
     await recomputeCluster(tx, clusterId);
 
+    // Migrate any pre-existing item-level match rows (cluster_id IS NULL) to
+    // the cluster level inside the same tx as the news_cluster_items INSERT.
+    // Without this, a workspace that already has a (workspace, item) match row
+    // (via the item-level partial UNIQUE) would receive a SECOND row when the
+    // next match_news_to_workspaces fan-out fires upsertByCluster — the two
+    // partial UNIQUEs don't overlap until cluster_id is non-NULL on the
+    // existing row. Atomic with the membership insert: any subsequent fan-out
+    // sees cluster_id already set and the cluster-level UNIQUE governs dedup.
+    await tx`
+      UPDATE workspace_news_matches
+      SET cluster_id = ${clusterId}, updated_at = now()
+      WHERE news_item_id = ${payload.news_item_id} AND cluster_id IS NULL
+    `;
+
     await tx`
       UPDATE global_news_items
       SET status = 'clustered', updated_at = now()

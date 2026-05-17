@@ -509,18 +509,35 @@ function tryParseScoreJson(
 /**
  * Pull out the first balanced `{...}` substring. Tolerates leading text like
  * "Here's the JSON:" and code fences. Returns null if no candidate found.
+ *
+ * Order of attempts matters: we scan for an outermost balanced object in the
+ * FULL text first, only falling back to the fence body when no whole-text
+ * candidate parses. Previously the fence body was preferred unconditionally,
+ * which silently swallowed valid JSON OUTSIDE the fence when the body INSIDE
+ * the fence was malformed (e.g. "```json {malformed``` {valid...}").
  */
 function extractJsonObject(text: string): string | null {
-  // Strip markdown fences first if present.
+  const fromFull = scanBalanced(text);
+  if (fromFull !== null && parseable(fromFull)) return fromFull;
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = fenceMatch?.[1] ?? text;
-  const start = body.indexOf('{');
+  if (fenceMatch?.[1]) {
+    const fromFence = scanBalanced(fenceMatch[1]);
+    if (fromFence !== null) return fromFence;
+  }
+  // Fall back to whatever the full-text scan returned (even if it didn't
+  // parse) — the caller surfaces a parse_error with the original reason,
+  // which is more diagnostic than "no JSON object found".
+  return fromFull;
+}
+
+function scanBalanced(text: string): string | null {
+  const start = text.indexOf('{');
   if (start === -1) return null;
   let depth = 0;
   let inString = false;
   let escape = false;
-  for (let i = start; i < body.length; i++) {
-    const c = body[i];
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
     if (escape) {
       escape = false;
       continue;
@@ -538,11 +555,20 @@ function extractJsonObject(text: string): string | null {
     else if (c === '}') {
       depth--;
       if (depth === 0) {
-        return body.slice(start, i + 1);
+        return text.slice(start, i + 1);
       }
     }
   }
   return null;
+}
+
+function parseable(candidate: string): boolean {
+  try {
+    JSON.parse(candidate);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

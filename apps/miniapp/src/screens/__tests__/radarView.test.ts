@@ -3,6 +3,8 @@ import type { RadarMatchProjection } from '../../api/types.ts';
 import {
   formatPublishedAt,
   formatScore,
+  isSafeExternalUrl,
+  pluralizeRu,
   selectRadarView,
   statusLabel,
   statusTone,
@@ -68,6 +70,11 @@ describe('selectRadarView', () => {
       items,
     });
   });
+  it('returns filter-empty when filter is active and items are empty', () => {
+    expect(
+      selectRadarView({ loading: false, errored: false, items: [], filterActive: true }),
+    ).toEqual({ kind: 'filter-empty' });
+  });
 });
 
 describe('formatScore', () => {
@@ -104,6 +111,79 @@ describe('statusLabel / statusTone', () => {
   it('candidate is positive, ai_refused is warning', () => {
     expect(statusTone('candidate')).toBe('positive');
     expect(statusTone('ai_refused')).toBe('warning');
+  });
+});
+
+describe('isSafeExternalUrl', () => {
+  it('accepts https', () => {
+    expect(isSafeExternalUrl('https://example.com/post')).toBe(true);
+  });
+  it('accepts http', () => {
+    expect(isSafeExternalUrl('http://example.com/post')).toBe(true);
+  });
+  it('accepts mixed-case protocol', () => {
+    expect(isSafeExternalUrl('HTTPS://example.com')).toBe(true);
+  });
+  it('rejects javascript:', () => {
+    expect(isSafeExternalUrl('javascript:alert(1)')).toBe(false);
+  });
+  it('rejects data:', () => {
+    expect(isSafeExternalUrl('data:text/html,<script>alert(1)</script>')).toBe(false);
+  });
+  it('rejects vbscript:', () => {
+    expect(isSafeExternalUrl('vbscript:msgbox(1)')).toBe(false);
+  });
+  it('rejects file:', () => {
+    expect(isSafeExternalUrl('file:///etc/passwd')).toBe(false);
+  });
+  it('rejects empty / null / undefined', () => {
+    expect(isSafeExternalUrl('')).toBe(false);
+    expect(isSafeExternalUrl(null)).toBe(false);
+    expect(isSafeExternalUrl(undefined)).toBe(false);
+  });
+  it('rejects malformed URL', () => {
+    expect(isSafeExternalUrl('not a url')).toBe(false);
+    expect(isSafeExternalUrl('://nope')).toBe(false);
+  });
+  // Phishing surface: `new URL` happily resolves host=evil.com here.
+  it('rejects userinfo-style phishing URLs', () => {
+    expect(isSafeExternalUrl('https://attacker.com@evil.com')).toBe(false);
+    expect(isSafeExternalUrl('https://user:pass@evil.com')).toBe(false);
+  });
+  // IDN homograph: visually identical to Latin example.com / пример.рф.
+  it('rejects raw-Unicode (IDN) hostnames', () => {
+    expect(isSafeExternalUrl('https://exаmple.com')).toBe(false); // Cyrillic 'а'
+    expect(isSafeExternalUrl('https://пример.рф')).toBe(false);
+  });
+  it('still accepts uppercase ASCII hostnames', () => {
+    expect(isSafeExternalUrl('https://EXAMPLE.com')).toBe(true);
+  });
+});
+
+describe('pluralizeRu', () => {
+  const forms: [string, string, string] = ['источник', 'источника', 'источников'];
+  it('1 → one form', () => {
+    expect(pluralizeRu(1, forms)).toBe('источник');
+  });
+  it('2 → few form', () => {
+    expect(pluralizeRu(2, forms)).toBe('источника');
+  });
+  it('5 → many form', () => {
+    expect(pluralizeRu(5, forms)).toBe('источников');
+  });
+  // 11..14 are the special-case "teens" that take the many form despite their
+  // last digits looking like one/few — CLDR rule kicks in via mod100.
+  it('11 → many form (teen exception)', () => {
+    expect(pluralizeRu(11, forms)).toBe('источников');
+  });
+  it('21 → one form (mod10=1, mod100=21 ≠ 11)', () => {
+    expect(pluralizeRu(21, forms)).toBe('источник');
+  });
+  it('22 → few form (mod10=2, mod100=22 ∉ 12..14)', () => {
+    expect(pluralizeRu(22, forms)).toBe('источника');
+  });
+  it('0 → many form', () => {
+    expect(pluralizeRu(0, forms)).toBe('источников');
   });
 });
 

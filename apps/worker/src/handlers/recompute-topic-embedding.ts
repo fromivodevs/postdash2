@@ -54,13 +54,26 @@ export const recomputeTopicEmbeddingHandler: TaskHandler = async (task, ctx) => 
 
   // Representative text. Empty topic_profile (no topics + no keywords) is
   // common right after CREATE — embedding it would produce a meaningless
-  // vector. Skip with embedding_status='pending' so the matcher knows to
-  // fall back to LLM-only scoring (no cosine pre-filter).
+  // vector. Empty topic profiles cannot be embedded — flip to terminal
+  // 'failed' state so scheduler.slowTick (which scans
+  // `WHERE embedding_status='pending'`) stops re-enqueueing this row every
+  // 5 minutes forever. The next user edit (updateTopicProfile) that adds
+  // topics or keywords flips the status back to 'pending', which re-arms
+  // the recompute. The matcher meanwhile falls back to LLM-only scoring
+  // for any embedding_status != 'ok' (no cosine pre-filter).
   const text = buildTopicText(topic.mainTopics, topic.keywords);
   if (text.trim().length === 0) {
+    await ctx.db
+      .update(topicProfiles)
+      .set({
+        embeddingStatus: 'failed',
+        embeddingUpdatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(topicProfiles.id, payload.topic_profile_id));
     ctx.logger.info(
       { topicProfileId: payload.topic_profile_id },
-      'topic_profile has no topics/keywords, skipping embedding',
+      'topic_profile has no topics/keywords; marked embedding_status=failed (terminal)',
     );
     return;
   }

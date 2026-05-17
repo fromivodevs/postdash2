@@ -149,6 +149,33 @@ describe('YandexProvider.score', () => {
     expect(r.score).toBe(7);
   });
 
+  it('prefers outermost balanced JSON over leading prose', async () => {
+    const withProse =
+      'Here\'s the JSON: {"score":7,"relevance_reason":"r","should_create_draft":false,"risk_flags":[]}';
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(completion(withProse)) as unknown as typeof globalThis.fetch;
+    const p = makeProvider(fetchImpl);
+    const r = await p.score(baseInput);
+    expect(r.score).toBe(7);
+  });
+
+  it('prefers a valid outer object even when a fence wraps an unrelated payload', async () => {
+    // Earlier extractJsonObject preferred the fence body unconditionally, so
+    // a wrong/unrelated fence above a valid outer object would parse as the
+    // wrong shape (or parse_error). The outer-balanced-first scan should win
+    // when the fence body does not match the score schema.
+    const mixed =
+      '{"score":8,"relevance_reason":"r","should_create_draft":false,"risk_flags":[]}\n' +
+      '```json\n{"unrelated":true}\n```';
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(completion(mixed)) as unknown as typeof globalThis.fetch;
+    const p = makeProvider(fetchImpl);
+    const r = await p.score(baseInput);
+    expect(r.score).toBe(8);
+  });
+
   it('repair-attempts once on parse failure', async () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn().mockImplementation(async () => {

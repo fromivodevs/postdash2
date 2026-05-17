@@ -376,6 +376,10 @@ export const topicProfiles = pgTable(
     uniqueIndex('topic_profiles_one_active_per_workspace_uniq')
       .on(t.workspaceId)
       .where(sql`${t.status} = 'active'`),
+    // Phase 5 perf (migration 0009): partial index on (embedding_status, status)
+    // WHERE embedding_status='pending' AND status='active' — covers
+    // scheduler.slowTick's recompute scan. Lives ONLY in the migration
+    // (parity-by-migration).
   ],
 );
 
@@ -821,6 +825,11 @@ export const workspaceNewsMatches = pgTable(
     uniqueIndex('workspace_news_matches_workspace_item_uniq')
       .on(t.workspaceId, t.newsItemId)
       .where(sql`${t.clusterId} IS NULL`),
+    // listRadarMatches orders by `score DESC NULLS LAST`. The actual
+    // `(workspace_id, status, score DESC NULLS LAST)` order is enforced via
+    // raw migration 0009_phase5_perf_indexes.sql — Drizzle's index builder
+    // can't express NULLS LAST cleanly. Mirror omits the sort direction
+    // (parity-by-migration).
     index('workspace_news_matches_workspace_status_score_idx').on(t.workspaceId, t.status, t.score),
     index('workspace_news_matches_news_item_idx').on(t.newsItemId),
   ],

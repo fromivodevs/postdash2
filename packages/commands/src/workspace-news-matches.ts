@@ -2,10 +2,12 @@
  * Workspace-news-matches commands (Phase 5).
  *
  * Three responsibilities:
- *   1. `upsertWorkspaceNewsMatch` — write/refresh a (workspace, news_item OR
- *      cluster) row from the score handler. Idempotent via the partial UNIQUE
- *      indexes (`workspace_news_matches_workspace_cluster_uniq` /
- *      `workspace_news_matches_workspace_item_uniq`) from migration 0008.
+ *   1. `upsertWorkspaceNewsMatch` — write/refresh a (workspace, news_item)
+ *      row from the score handler. Idempotent and race-free via
+ *      `pg_advisory_xact_lock` + `SELECT ... FOR UPDATE`; the partial
+ *      UNIQUE indexes (`workspace_news_matches_workspace_cluster_uniq` /
+ *      `workspace_news_matches_workspace_item_uniq`) from migration 0008
+ *      remain as defence-in-depth.
  *   2. `suppressWorkspaceNewsMatch` — user-driven "hide this" action
  *      (status='suppressed'). Phase 6+ UX hook; the route + UI land later
  *      but the command is here so audit-log + policy live with the
@@ -84,22 +86,34 @@ export interface UpsertResult {
 }
 
 /**
- * Upsert by the natural key derived from clusterId.
+ * Upsert the workspace_news_matches row for (workspace_id, news_item_id).
  *
- * Cluster-level dedup: when `clusterId` is set, the partial UNIQUE
- * `(workspace_id, cluster_id) WHERE cluster_id IS NOT NULL` collapses repeat
- * inserts for the same story. We INSERT with `ON CONFLICT ... DO UPDATE` and
- * the planner picks the partial index because the row predicate matches.
+ * Concurrency model:
+ *   1. Acquire `pg_advisory_xact_lock(hashtext(workspace_id), hashtext(
+ *      news_item_id))` — two concurrent matchers for the same (workspace,
+ *      item) serialize on this lock. Released automatically at tx end.
+ *   2. `SELECT ... FOR UPDATE` the existing row, if any. The advisory lock
+ *      guarantees no second tx is in flight, so the FOR UPDATE is a safety
+ *      belt rather than a primary serialization mechanism.
+ *   3. UPDATE if a row exists (refreshing every settable field, including
+ *      `cluster_id` — handles the NULL→non-NULL flip when cluster_news
+ *      attaches the item between two match runs); INSERT otherwise.
  *
- * Item-level dedup: when `clusterId` is NULL (item not yet clustered), the
- * `(workspace_id, news_item_id) WHERE cluster_id IS NULL` partial UNIQUE
- * handles it instead. We split into two INSERT statements with different
- * ON CONFLICT targets — Postgres needs the target column list to choose a
- * partial index.
+ * Why advisory lock instead of relying on the two partial UNIQUEs alone:
+ *   - Pre-fix, the matcher SELECTed cluster_id=NULL, then cluster_news
+ *     committed and flipped cluster_id to non-NULL, then the matcher tried
+ *     to INSERT with cluster_id=NULL via the item-level partial UNIQUE — but
+ *     the existing row's cluster_id is now non-NULL, so the item-level UNIQUE
+ *     (`WHERE cluster_id IS NULL`) no longer covers it. Result: 2 radar rows
+ *     per (workspace, item).
+ *   - With the advisory lock + FOR UPDATE, concurrent matchers serialize and
+ *     the second one observes the first one's row regardless of whether
+ *     cluster_id has been flipped. The two partial UNIQUEs remain as a
+ *     defence-in-depth check at the DB layer.
  *
  * Behaviour on UPDATE branch: every settable field is refreshed (score,
- * reason, components, model, status, scoredAt). created_at is NOT touched
- * (immutable). updated_at advances to now().
+ * reason, components, model, status, scoredAt, cluster_id). `created_at` is
+ * NOT touched (immutable). `updated_at` advances to now().
  *
  * Returns `{id, inserted}` so the worker can decide whether to enqueue
  * downstream `generate_post_draft` (Phase 6) on a fresh row vs a re-score.
@@ -117,117 +131,79 @@ export async function upsertWorkspaceNewsMatch(
   }
   const data = parsed.data;
 
-  // Two-statement strategy: ON CONFLICT must name a unique index target, and
-  // Postgres has no way to "pick whichever partial unique matches". We branch
-  // on the runtime value of clusterId — the predicate column matches a
-  // specific partial UNIQUE, so the planner uses it.
-  if (data.clusterId !== null) {
-    return upsertByCluster(db, data);
-  }
-  return upsertByItem(db, data);
-}
+  return db.transaction(async (tx) => {
+    // Serialize concurrent matchers for the same (workspace, item). Uses the
+    // two-int4 form of pg_advisory_xact_lock; `hashtext()` returns int4 and
+    // a single bigint is reconstructed from the two ints, giving a stable
+    // deterministic key per pair. Released at tx end.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${data.workspaceId}), hashtext(${data.newsItemId}))`,
+    );
 
-async function upsertByCluster(
-  db: Database,
-  data: UpsertWorkspaceNewsMatchInput,
-): Promise<UpsertResult> {
-  const rows = await db
-    .insert(workspaceNewsMatches)
-    .values({
-      workspaceId: data.workspaceId,
-      newsItemId: data.newsItemId,
-      clusterId: data.clusterId,
-      score: data.score === null ? null : String(data.score),
-      relevanceReason: data.relevanceReason,
-      shouldCreateDraft: data.shouldCreateDraft,
-      riskFlags: data.riskFlags,
-      scoreComponents: data.scoreComponents,
-      aiProvider: data.aiProvider,
-      usedModel: data.usedModel,
-      promptVersion: data.promptVersion,
-      status: data.status,
-      scoredAt: data.scoredAt,
-    })
-    .onConflictDoUpdate({
-      target: [workspaceNewsMatches.workspaceId, workspaceNewsMatches.clusterId],
-      // Repeat the partial-index predicate so Postgres binds the ON CONFLICT
-      // arbiter to `workspace_news_matches_workspace_cluster_uniq` exactly.
-      targetWhere: sql`${workspaceNewsMatches.clusterId} IS NOT NULL`,
-      set: {
-        newsItemId: sql`EXCLUDED.news_item_id`,
-        score: sql`EXCLUDED.score`,
-        relevanceReason: sql`EXCLUDED.relevance_reason`,
-        shouldCreateDraft: sql`EXCLUDED.should_create_draft`,
-        riskFlags: sql`EXCLUDED.risk_flags`,
-        scoreComponents: sql`EXCLUDED.score_components`,
-        aiProvider: sql`EXCLUDED.ai_provider`,
-        usedModel: sql`EXCLUDED.used_model`,
-        promptVersion: sql`EXCLUDED.prompt_version`,
-        status: sql`EXCLUDED.status`,
-        scoredAt: sql`EXCLUDED.scored_at`,
-        updatedAt: new Date(),
-      },
-    })
-    .returning({
-      id: workspaceNewsMatches.id,
-      inserted: sql<boolean>`xmax = 0`,
-    });
-  const row = rows[0];
-  if (!row) {
-    throw new CommandError('internal', 'workspace_news_matches upsert returned no row');
-  }
-  return { id: row.id, inserted: row.inserted === true };
-}
+    const existing = await tx
+      .select({
+        id: workspaceNewsMatches.id,
+      })
+      .from(workspaceNewsMatches)
+      .where(
+        and(
+          eq(workspaceNewsMatches.workspaceId, data.workspaceId),
+          eq(workspaceNewsMatches.newsItemId, data.newsItemId),
+        ),
+      )
+      .for('update')
+      .limit(1);
 
-async function upsertByItem(
-  db: Database,
-  data: UpsertWorkspaceNewsMatchInput,
-): Promise<UpsertResult> {
-  const rows = await db
-    .insert(workspaceNewsMatches)
-    .values({
-      workspaceId: data.workspaceId,
-      newsItemId: data.newsItemId,
-      clusterId: null,
-      score: data.score === null ? null : String(data.score),
-      relevanceReason: data.relevanceReason,
-      shouldCreateDraft: data.shouldCreateDraft,
-      riskFlags: data.riskFlags,
-      scoreComponents: data.scoreComponents,
-      aiProvider: data.aiProvider,
-      usedModel: data.usedModel,
-      promptVersion: data.promptVersion,
-      status: data.status,
-      scoredAt: data.scoredAt,
-    })
-    .onConflictDoUpdate({
-      target: [workspaceNewsMatches.workspaceId, workspaceNewsMatches.newsItemId],
-      // Binds the arbiter to `workspace_news_matches_workspace_item_uniq`,
-      // the (workspace_id, news_item_id) WHERE cluster_id IS NULL index.
-      targetWhere: sql`${workspaceNewsMatches.clusterId} IS NULL`,
-      set: {
-        score: sql`EXCLUDED.score`,
-        relevanceReason: sql`EXCLUDED.relevance_reason`,
-        shouldCreateDraft: sql`EXCLUDED.should_create_draft`,
-        riskFlags: sql`EXCLUDED.risk_flags`,
-        scoreComponents: sql`EXCLUDED.score_components`,
-        aiProvider: sql`EXCLUDED.ai_provider`,
-        usedModel: sql`EXCLUDED.used_model`,
-        promptVersion: sql`EXCLUDED.prompt_version`,
-        status: sql`EXCLUDED.status`,
-        scoredAt: sql`EXCLUDED.scored_at`,
-        updatedAt: new Date(),
-      },
-    })
-    .returning({
-      id: workspaceNewsMatches.id,
-      inserted: sql<boolean>`xmax = 0`,
-    });
-  const row = rows[0];
-  if (!row) {
-    throw new CommandError('internal', 'workspace_news_matches upsert returned no row');
-  }
-  return { id: row.id, inserted: row.inserted === true };
+    if (existing[0]) {
+      const updated = await tx
+        .update(workspaceNewsMatches)
+        .set({
+          clusterId: data.clusterId,
+          score: data.score === null ? null : String(data.score),
+          relevanceReason: data.relevanceReason,
+          shouldCreateDraft: data.shouldCreateDraft,
+          riskFlags: data.riskFlags,
+          scoreComponents: data.scoreComponents,
+          aiProvider: data.aiProvider,
+          usedModel: data.usedModel,
+          promptVersion: data.promptVersion,
+          status: data.status,
+          scoredAt: data.scoredAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(workspaceNewsMatches.id, existing[0].id))
+        .returning({ id: workspaceNewsMatches.id });
+      const row = updated[0];
+      if (!row) {
+        throw new CommandError('internal', 'workspace_news_matches update returned no row');
+      }
+      return { id: row.id, inserted: false };
+    }
+
+    const inserted = await tx
+      .insert(workspaceNewsMatches)
+      .values({
+        workspaceId: data.workspaceId,
+        newsItemId: data.newsItemId,
+        clusterId: data.clusterId,
+        score: data.score === null ? null : String(data.score),
+        relevanceReason: data.relevanceReason,
+        shouldCreateDraft: data.shouldCreateDraft,
+        riskFlags: data.riskFlags,
+        scoreComponents: data.scoreComponents,
+        aiProvider: data.aiProvider,
+        usedModel: data.usedModel,
+        promptVersion: data.promptVersion,
+        status: data.status,
+        scoredAt: data.scoredAt,
+      })
+      .returning({ id: workspaceNewsMatches.id });
+    const row = inserted[0];
+    if (!row) {
+      throw new CommandError('internal', 'workspace_news_matches insert returned no row');
+    }
+    return { id: row.id, inserted: true };
+  });
 }
 
 // =============================================================================
@@ -370,12 +346,11 @@ export async function listRadarMatches(
       }
       const where = filters.length === 1 ? filters[0]! : and(...filters)!;
 
-      const totalRows = (await tx
-        .select({ c: sql<number>`count(*)::int` })
-        .from(workspaceNewsMatches)
-        .where(where)) as Array<{ c: number }>;
-      const total = totalRows[0]?.c ?? 0;
-
+      // Single-statement projection: `count(*) OVER ()` returns the filtered
+      // row count alongside each row so we get pagination metadata without a
+      // second SELECT (which would drift on concurrent INSERT between the
+      // two statements). The total is the same for every row, so we read it
+      // off the first row.
       const offset = (data.page - 1) * data.pageSize;
       const rows = await tx
         .select({
@@ -405,6 +380,7 @@ export async function listRadarMatches(
           sourceName: sources.name,
           sourceCanonicalUrl: sources.canonicalUrl,
           clusterSourcesCount: newsClusters.sourcesCount,
+          total: sql<number>`count(*) OVER ()::int`,
         })
         .from(workspaceNewsMatches)
         .innerJoin(globalNewsItems, eq(globalNewsItems.id, workspaceNewsMatches.newsItemId))
@@ -420,6 +396,15 @@ export async function listRadarMatches(
         )
         .limit(data.pageSize)
         .offset(offset);
+
+      // `count(*) OVER ()` returns the filtered row count on every row. If
+      // the page is empty (zero matches under the filter), there is no row to
+      // read `total` from — fall back to 0. Note: pages BEYOND the last row
+      // also resolve to total=0 here; callers wanting to distinguish "empty
+      // page past the end" can check `items.length === 0 && page > 1`. This
+      // matches the prior two-statement semantics on the common path
+      // (page=1, no rows) without the second SELECT race.
+      const total = rows.length > 0 ? (rows[0]!.total ?? 0) : 0;
 
       const items: RadarMatchRow[] = rows.map((r) => ({
         matchId: r.matchId,
